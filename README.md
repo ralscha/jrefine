@@ -236,11 +236,11 @@ Pushing a `vX.Y.Z` tag whose version matches `pom.xml` runs the complete Maven v
 dogfood build, checks the version reported by the packaged JAR, and creates a GitHub release. The
 release contains the runnable `jrefine.jar` and its `jrefine.jar.sha256` checksum.
 
-For example, publish version 0.1.0 after its release commit is on the default branch:
+For example, publish version 1.0.0 after its release commit is on the default branch:
 
 ```shell
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 The release workflow uses the repository's built-in `GITHUB_TOKEN`; no release secret is required.

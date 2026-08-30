@@ -4,7 +4,7 @@
 
     <groupId>ch.rasc.jrefine</groupId>
     <artifactId>jrefine</artifactId>
-    <version>0.1.0</version>
+    <version>1.0.0</version>
     <name>JRefine</name>
     <description>An extensible command-line tool for inspecting and modernizing Java source code.</description>
     <licenses>
