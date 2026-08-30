@@ -1,0 +1,40 @@
+version: '3'
+
+vars:
+  MVNW: '{{if eq OS "windows"}}cmd /c mvnw.cmd{{else}}./mvnw{{end}}'
+
+tasks:
+  default:
+    desc: List all available tasks
+    cmds:
+      - task --list-all
+
+  clean:
+    desc: Clean the project
+    cmds:
+      - '{{.MVNW}} clean'
+
+  format:
+    desc: Format Java sources with Spring Java Format
+    cmds:
+      - '{{.MVNW}} spring-javaformat:apply'
+
+  format-check:
+    desc: Check Java source formatting
+    cmds:
+      - '{{.MVNW}} validate'
+
+  test:
+    desc: Run all tests
+    cmds:
+      - '{{.MVNW}} test'
+
+  verify:
+    desc: Run the complete CI verification build
+    cmds:
+      - '{{.MVNW}} clean verify'
+
+  package:
+    desc: Build the runnable JAR
+    cmds:
+      - '{{.MVNW}} clean package'
