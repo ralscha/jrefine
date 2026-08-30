@@ -5,82 +5,10 @@ JRefine is an extensible command-line source inspector and cleanup tool built on
 reports modernization opportunities, and can apply safe, range-based fixes while preserving the
 surrounding source layout.
 
-The 210 built-in tools are grouped by responsibility:
-
-- Declarations: `add-override-annotation`, `add-serial-annotation`, `join-declaration-and-assignment`, `narrow-variable-scope`, `remove-empty-initializers`,
-  `remove-redundant-field-initialization`, `remove-redundant-no-arg-constructor`,
-  `remove-redundant-interfaces`, `remove-redundant-lambda-parameter-types`, `remove-redundant-local-variable`,
-  `remove-redundant-declaration-elements`, `remove-redundant-method-override`, `remove-redundant-object-bounds`,
-  `remove-redundant-record-constructor`,
-  `remove-redundant-throws`, `remove-self-assignment`,
-  `remove-invalid-serial-annotation`, `remove-unnecessary-final`, `remove-unnecessary-modifiers`, `remove-unnecessary-super-call`,
-  `remove-unused-assignments`, `remove-unused-imports`, `replace-wildcard-imports`,
-  `report-abstraction-design-issues`, `report-api-naming-conflicts`, `report-class-structure-issues`, `report-cloning-issues`,
-  `report-code-maturity-issues`, `report-constant-parameter`, `report-declaration-contract-bugs`, `report-declaration-style-issues`,
-  `report-duplicate-code`, `report-encapsulation-policy-issues`, `report-field-initialization-contract-issues`, `report-lombok-accessor`,
-  `report-lombok-contract-issues`,
-  `report-inheritance-design-issues`, `report-initialization-bugs`, `report-javabeans-contract-bugs`,
-  `report-javabeans-policy-issues`,
-  `report-javadoc-contract-issues`, `report-javadoc-reference-issues`,
-  `report-memory-issues`, `report-module-contract-issues`, `report-mutable-state-exposure`, `report-name-shadowing-issues`, `report-nullability-bugs`,
-  `report-raw-parameterized-types`,
-  `report-security-hardening-issues`, `report-security-sensitive-code`, `report-serialization-contract-bugs`, `report-serialization-state-bugs`,
-  `report-state-usage-bugs`, `use-varargs-parameter`
-- Control flow: `collapse-loop-to-stream`, `merge-duplicate-switch-branches`, `merge-identical-catch-branches`,
-  `remove-redundant-array-length-check`, `remove-unnecessary-break`, `remove-unnecessary-continue`,
-  `remove-unnecessary-enum-switch-default`, `remove-unnecessary-return`, `remove-unreachable-catch`,
-  `report-assertion-control-flow-bugs`, `report-async-correctness-issues`, `report-concurrency-api-bugs`, `report-concurrency-contract-bugs`, `report-conditional-flow-issues`,
-  `report-control-flow-structure-issues`, `report-embedded-resource-performance`,
-  `report-exception-contract-issues`, `report-exception-flow-bugs`, `report-guarded-state-issues`,
-  `report-resource-lifecycle-policy-issues`, `report-resource-management-bugs`,
-  `report-synchronization-consistency-issues`, `report-test-assertion-bugs`, `report-testng-contract-bugs`,
-  `report-thread-coordination-issues`, `report-threading-policy-issues`,
-  `simplify-labels`, `use-array-fill`, `use-bulk-operation`, `use-enhanced-for`,
-  `use-enhanced-for-while`, `use-enhanced-switch`, `use-iterator-for-enumeration`, `use-list-replace-all`,
-  `use-map-for-each`, `use-remove-if`, `use-string-repeat`, `use-switch-expression`, `use-switch-for-if`,
-  `use-try-with-resources`
-- Expressions: `fold-expression-into-stream`, `inline-only-used-element`, `modernize-bigdecimal`, `narrow-variable-type`, `normalize-comparisons`,
-  `optimize-performance-expressions`,
-  `promote-integer-operation-to-long`, `qualify-static-member-access`, `remove-boxing-of-boxed-value`, `remove-empty-string-concatenation`,
-  `remove-mapping-before-count`, `remove-no-effect-string-replacement`,
-  `remove-redundant-array-creation`, `remove-redundant-compare-call`, `remove-redundant-file-creation`,
-  `remove-redundant-regex-replacement-escape`, `remove-redundant-stream-optional-step`,
-  `remove-redundant-type-arguments`, `remove-redundant-type-cast`, `remove-redundant-unmodifiable-wrapper`,
-  `remove-unnecessary-boxing`, `remove-unnecessary-numeric-cast`, `remove-unnecessary-string-escape`, `remove-unnecessary-to-string`,
-  `remove-unnecessary-unboxing`, `replace-bigdecimal-legacy-rounding`, `replace-cast-with-variable`, `replace-number-constructor`,
-  `replace-guava-functional-primitives`, `replace-redundant-class-call`, `report-jdbc-index-zero`,
-  `report-api-misuse-bugs`, `report-assignment-issues`, `report-bitwise-operation-issues`,
-  `report-collection-array-bugs`, `report-expression-style-issues`,
-  `report-collection-performance`, `report-complex-arithmetic-expression`, `report-equality-contract-bugs`,
-  `report-floating-point-issues`, `report-format-string-bugs`, `report-functional-expression-redundancy`, `report-injection-risks`,
-  `report-internationalization-policy-issues`, `report-locale-sensitive-code`, `report-logging-issues`,
-  `report-lossy-numeric-cast`,
-  `report-numeric-conversion-issues`, `report-numeric-overflow`, `report-write-only-object`,
-  `report-reflection-contract-bugs`,
-  `report-stream-lambda-performance`, `report-string-performance`, `report-throwable-construction-issues`,
-  `simplify-boolean-expression`, `simplify-collector`, `simplify-comparator-method`, `simplify-covered-conditions`,
-  `simplify-excessive-lambda`, `simplify-for-each`, `simplify-map-operations`, `simplify-numeric-expressions`,
-  `simplify-obvious-null-check`, `simplify-optional-call-chain`, `simplify-pointless-bitwise-expressions`,
-  `simplify-range-check`,
-  `simplify-redundant-collection-operation`, `simplify-redundant-java-time-operation`,
-  `simplify-redundant-string-operation`, `simplify-stream-call-chain`, `simplify-string-format`,
-  `use-bulk-file-attributes`, `use-clamp`,
-  `use-collection-copy-constructor`, `use-collection-factory`, `use-comparator-combinators`, `use-expression-lambda`,
-  `use-files-string-methods`, `use-float-literal`, `use-instanceof-patterns`, `use-is-empty`,
-  `use-known-constant`, `use-lambda-for-anonymous`, `use-list-sort`, `use-long-literal`, `use-math-min-max`,
-  `use-method-call-for-lambda`,
-  `use-method-reference`, `use-method-reference-for-anonymous`, `use-null-fallback-method`, `use-numeric-compare`, `use-objects-equals`,
-  `use-operator-assignment`, `use-pattern-variable`, `use-record-pattern`, `use-sequenced-collection-methods`,
-  `use-shorter-lambda-alternative`, `use-standard-charset`, `use-standard-hash-code`,
-  `use-stream-for-guava-call`, `use-string-contains`, `use-string-replace`
-- Syntax: `fix-javadoc-paragraphs`, `normalize-array-declarations`,
-  `report-block-text-style-issues`, `report-numeric-literal-issues`, `report-portability-issues`,
-  `remove-unnecessary-parentheses`, `remove-unnecessary-semicolons`, `simplify-annotations`,
-  `simplify-array-initializers`, `sort-modifiers`, `use-text-block`
-- Types: `replace-string-builder-with-string`, `use-diamond-operator`, `use-string-builder`
-
-Run `--list-tools` for their CLI descriptions. See [ROADMAP.md](ROADMAP.md) for the complete
-IntelliJ Java inspection inventory, implementation mapping, and future candidates.
+The 210 built-in tools cover five responsibilities: declarations, control flow, expressions,
+syntax, and types. See the [complete list of built-in tools](#built-in-tools), or run
+`--list-tools` for their CLI descriptions. [ROADMAP.md](ROADMAP.md) contains the complete IntelliJ
+Java inspection inventory, implementation mapping, and future candidates.
 
 ## Installation
 
@@ -104,39 +32,6 @@ java -jar .\jrefine.jar --version
 ```
 
 The checksum comparison prints `True` when the Windows download matches the released artifact.
-
-## Building from source
-
-The project requires JDK 25 or newer. Maven itself does not need to be installed because the
-repository contains Maven Wrapper scripts pinned to Maven 3.9.16.
-
-On macOS or Linux:
-
-```shell
-./mvnw clean verify
-```
-
-On Windows:
-
-```powershell
-.\mvnw.cmd clean verify
-```
-
-The build produces a runnable, dependency-containing JAR at `target/jrefine.jar`.
-
-## Development tasks
-
-Install [Task](https://taskfile.dev/) to use the cross-platform commands in
-[`Taskfile.yml`](Taskfile.yml):
-
-```shell
-task                 # list available tasks
-task format          # apply Spring Java Format
-task format-check    # check Java source formatting
-task test            # run all tests
-task verify          # run the complete CI verification build
-task package         # build the runnable JAR
-```
 
 ## CLI usage
 
@@ -246,6 +141,39 @@ git push origin v1.0.0
 The release workflow uses the repository's built-in `GITHUB_TOKEN`; no release secret is required.
 The repository's GitHub Actions workflow permissions must allow read and write access to repository
 contents.
+
+## Building from source
+
+The project requires JDK 25 or newer. Maven itself does not need to be installed because the
+repository contains Maven Wrapper scripts pinned to Maven 3.9.16.
+
+On macOS or Linux:
+
+```shell
+./mvnw clean verify
+```
+
+On Windows:
+
+```powershell
+.\mvnw.cmd clean verify
+```
+
+The build produces a runnable, dependency-containing JAR at `target/jrefine.jar`.
+
+## Development tasks
+
+Install [Task](https://taskfile.dev/) to use the cross-platform commands in
+[`Taskfile.yml`](Taskfile.yml):
+
+```shell
+task                 # list available tasks
+task format          # apply Spring Java Format
+task format-check    # check Java source formatting
+task test            # run all tests
+task verify          # run the complete CI verification build
+task package         # build the runnable JAR
+```
 
 ## Adding an inspection
 
@@ -519,6 +447,80 @@ overloads, separated builder appends, bounded random integers, enum identity, an
 Capacity sizing, collection implementation changes, static conversion, lifecycle handling, loop
 restructuring, regex caching, boxing policy, and embedded-device thresholds remain report-only
 because their best correction depends on workload, API contracts, or deployment constraints.
+
+## Built-in tools
+
+- Declarations: `add-override-annotation`, `add-serial-annotation`, `join-declaration-and-assignment`, `narrow-variable-scope`, `remove-empty-initializers`,
+  `remove-redundant-field-initialization`, `remove-redundant-no-arg-constructor`,
+  `remove-redundant-interfaces`, `remove-redundant-lambda-parameter-types`, `remove-redundant-local-variable`,
+  `remove-redundant-declaration-elements`, `remove-redundant-method-override`, `remove-redundant-object-bounds`,
+  `remove-redundant-record-constructor`,
+  `remove-redundant-throws`, `remove-self-assignment`,
+  `remove-invalid-serial-annotation`, `remove-unnecessary-final`, `remove-unnecessary-modifiers`, `remove-unnecessary-super-call`,
+  `remove-unused-assignments`, `remove-unused-imports`, `replace-wildcard-imports`,
+  `report-abstraction-design-issues`, `report-api-naming-conflicts`, `report-class-structure-issues`, `report-cloning-issues`,
+  `report-code-maturity-issues`, `report-constant-parameter`, `report-declaration-contract-bugs`, `report-declaration-style-issues`,
+  `report-duplicate-code`, `report-encapsulation-policy-issues`, `report-field-initialization-contract-issues`, `report-lombok-accessor`,
+  `report-lombok-contract-issues`,
+  `report-inheritance-design-issues`, `report-initialization-bugs`, `report-javabeans-contract-bugs`,
+  `report-javabeans-policy-issues`,
+  `report-javadoc-contract-issues`, `report-javadoc-reference-issues`,
+  `report-memory-issues`, `report-module-contract-issues`, `report-mutable-state-exposure`, `report-name-shadowing-issues`, `report-nullability-bugs`,
+  `report-raw-parameterized-types`,
+  `report-security-hardening-issues`, `report-security-sensitive-code`, `report-serialization-contract-bugs`, `report-serialization-state-bugs`,
+  `report-state-usage-bugs`, `use-varargs-parameter`
+- Control flow: `collapse-loop-to-stream`, `merge-duplicate-switch-branches`, `merge-identical-catch-branches`,
+  `remove-redundant-array-length-check`, `remove-unnecessary-break`, `remove-unnecessary-continue`,
+  `remove-unnecessary-enum-switch-default`, `remove-unnecessary-return`, `remove-unreachable-catch`,
+  `report-assertion-control-flow-bugs`, `report-async-correctness-issues`, `report-concurrency-api-bugs`, `report-concurrency-contract-bugs`, `report-conditional-flow-issues`,
+  `report-control-flow-structure-issues`, `report-embedded-resource-performance`,
+  `report-exception-contract-issues`, `report-exception-flow-bugs`, `report-guarded-state-issues`,
+  `report-resource-lifecycle-policy-issues`, `report-resource-management-bugs`,
+  `report-synchronization-consistency-issues`, `report-test-assertion-bugs`, `report-testng-contract-bugs`,
+  `report-thread-coordination-issues`, `report-threading-policy-issues`,
+  `simplify-labels`, `use-array-fill`, `use-bulk-operation`, `use-enhanced-for`,
+  `use-enhanced-for-while`, `use-enhanced-switch`, `use-iterator-for-enumeration`, `use-list-replace-all`,
+  `use-map-for-each`, `use-remove-if`, `use-string-repeat`, `use-switch-expression`, `use-switch-for-if`,
+  `use-try-with-resources`
+- Expressions: `fold-expression-into-stream`, `inline-only-used-element`, `modernize-bigdecimal`, `narrow-variable-type`, `normalize-comparisons`,
+  `optimize-performance-expressions`,
+  `promote-integer-operation-to-long`, `qualify-static-member-access`, `remove-boxing-of-boxed-value`, `remove-empty-string-concatenation`,
+  `remove-mapping-before-count`, `remove-no-effect-string-replacement`,
+  `remove-redundant-array-creation`, `remove-redundant-compare-call`, `remove-redundant-file-creation`,
+  `remove-redundant-regex-replacement-escape`, `remove-redundant-stream-optional-step`,
+  `remove-redundant-type-arguments`, `remove-redundant-type-cast`, `remove-redundant-unmodifiable-wrapper`,
+  `remove-unnecessary-boxing`, `remove-unnecessary-numeric-cast`, `remove-unnecessary-string-escape`, `remove-unnecessary-to-string`,
+  `remove-unnecessary-unboxing`, `replace-bigdecimal-legacy-rounding`, `replace-cast-with-variable`, `replace-number-constructor`,
+  `replace-guava-functional-primitives`, `replace-redundant-class-call`, `report-jdbc-index-zero`,
+  `report-api-misuse-bugs`, `report-assignment-issues`, `report-bitwise-operation-issues`,
+  `report-collection-array-bugs`, `report-expression-style-issues`,
+  `report-collection-performance`, `report-complex-arithmetic-expression`, `report-equality-contract-bugs`,
+  `report-floating-point-issues`, `report-format-string-bugs`, `report-functional-expression-redundancy`, `report-injection-risks`,
+  `report-internationalization-policy-issues`, `report-locale-sensitive-code`, `report-logging-issues`,
+  `report-lossy-numeric-cast`,
+  `report-numeric-conversion-issues`, `report-numeric-overflow`, `report-write-only-object`,
+  `report-reflection-contract-bugs`,
+  `report-stream-lambda-performance`, `report-string-performance`, `report-throwable-construction-issues`,
+  `simplify-boolean-expression`, `simplify-collector`, `simplify-comparator-method`, `simplify-covered-conditions`,
+  `simplify-excessive-lambda`, `simplify-for-each`, `simplify-map-operations`, `simplify-numeric-expressions`,
+  `simplify-obvious-null-check`, `simplify-optional-call-chain`, `simplify-pointless-bitwise-expressions`,
+  `simplify-range-check`,
+  `simplify-redundant-collection-operation`, `simplify-redundant-java-time-operation`,
+  `simplify-redundant-string-operation`, `simplify-stream-call-chain`, `simplify-string-format`,
+  `use-bulk-file-attributes`, `use-clamp`,
+  `use-collection-copy-constructor`, `use-collection-factory`, `use-comparator-combinators`, `use-expression-lambda`,
+  `use-files-string-methods`, `use-float-literal`, `use-instanceof-patterns`, `use-is-empty`,
+  `use-known-constant`, `use-lambda-for-anonymous`, `use-list-sort`, `use-long-literal`, `use-math-min-max`,
+  `use-method-call-for-lambda`,
+  `use-method-reference`, `use-method-reference-for-anonymous`, `use-null-fallback-method`, `use-numeric-compare`, `use-objects-equals`,
+  `use-operator-assignment`, `use-pattern-variable`, `use-record-pattern`, `use-sequenced-collection-methods`,
+  `use-shorter-lambda-alternative`, `use-standard-charset`, `use-standard-hash-code`,
+  `use-stream-for-guava-call`, `use-string-contains`, `use-string-replace`
+- Syntax: `fix-javadoc-paragraphs`, `normalize-array-declarations`,
+  `report-block-text-style-issues`, `report-numeric-literal-issues`, `report-portability-issues`,
+  `remove-unnecessary-parentheses`, `remove-unnecessary-semicolons`, `simplify-annotations`,
+  `simplify-array-initializers`, `sort-modifiers`, `use-text-block`
+- Types: `replace-string-builder-with-string`, `use-diamond-operator`, `use-string-builder`
 
 ## License
 
