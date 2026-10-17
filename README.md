@@ -145,7 +145,7 @@ contents.
 ## Building from source
 
 The project requires JDK 25 or newer. Maven itself does not need to be installed because the
-repository contains Maven Wrapper scripts pinned to Maven 3.9.16.
+repository contains Maven Wrapper scripts pinned to Maven 3.10.0.
 
 On macOS or Linux:
 
