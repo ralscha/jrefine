@@ -53,6 +53,45 @@ class SourceEditorTest {
 	}
 
 	@Test
+	void rejectsColumnsThatCrossIntoAnotherLine() {
+		SourceEditor editor = new SourceEditor("abc\ndef");
+		assertThrows(IllegalArgumentException.class, () -> editor.insert(new Position(1, 5), "x"));
+		assertThrows(IllegalArgumentException.class, () -> editor.insert(new Position(2, 0), "x"));
+		assertThrows(IllegalArgumentException.class, () -> editor.insert(new Position(2, Integer.MAX_VALUE), "x"));
+	}
+
+	@Test
+	void onlyInsertionMayAddressTheEndOfTheSource() {
+		SourceEditor editor = new SourceEditor("abc");
+		Range outside = new Range(new Position(1, 4), new Position(1, 4));
+		assertThrows(IllegalArgumentException.class, () -> editor.text(outside));
+		assertThrows(IllegalArgumentException.class, () -> editor.removeWithLeadingWhitespace(outside));
+		assertThrows(IllegalArgumentException.class, () -> editor.removeWithTrailingWhitespace(outside));
+		editor.insert(new Position(1, 4), "d");
+		assertEquals("abcd", editor.render());
+	}
+
+	@Test
+	void composesBoundaryInsertionsInQueueOrder() {
+		SourceEditor editor = new SourceEditor("abc");
+		editor.replace(new Range(new Position(1, 2), new Position(1, 2)), "B");
+		editor.insert(new Position(1, 2), "first");
+		editor.insert(new Position(1, 2), "second");
+		editor.insert(new Position(1, 3), "after");
+		assertEquals("afirstsecondBafterc", editor.render());
+	}
+
+	@Test
+	void rendersManyLengthChangingEditsAgainstOriginalOffsets() {
+		SourceEditor editor = new SourceEditor("ab".repeat(10_000));
+		for (int index = 0; index < 10_000; index++) {
+			Position position = new Position(1, index * 2 + 1);
+			editor.replace(new Range(position, position), "longer");
+		}
+		assertEquals("longerb".repeat(10_000), editor.render());
+	}
+
+	@Test
 	void removesAnOtherwiseEmptyNodeLine() {
 		String source = String.join(CARRIAGE_RETURN_LINE_FEED, "import java.util.Map;", "", "class Sample {}", "");
 		CompilationUnit compilationUnit = StaticJavaParser.parse(source);

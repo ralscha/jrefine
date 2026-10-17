@@ -6,7 +6,9 @@ package ch.rasc.jrefine.api;
  * <p>
  * Implementations are discovered with {@link java.util.ServiceLoader}. A tool may mutate
  * the supplied compilation unit and queue matching edits through
- * {@link InspectionContext#editor()} only when {@code applyFixes} is {@code true}.
+ * {@link InspectionContext#editor()} only when {@code applyFixes} is {@code true}. A tool
+ * that returns an unchanged result must leave both the compilation unit and editor
+ * unchanged, allowing the engine to reuse the parsed source for the next tool.
  * </p>
  */
 public interface InspectionTool {

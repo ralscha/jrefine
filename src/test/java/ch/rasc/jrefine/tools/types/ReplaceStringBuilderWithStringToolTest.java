@@ -45,6 +45,32 @@ class ReplaceStringBuilderWithStringToolTest {
 	}
 
 	@Test
+	void preservesNullConversionForASingleStringAppend() {
+		InspectionContext context = TestSources.parse("""
+				class Sample { String build(String value) {
+				    StringBuilder result = new StringBuilder();
+				    result.append(value);
+				    return result.toString();
+				} }
+				""");
+		assertTrue(new ReplaceStringBuilderWithStringTool().inspect(context, true).changed());
+		assertTrue(TestSources.print(context).contains("String result = String.valueOf(value);"));
+	}
+
+	@Test
+	void convertsStringArraysAsObjectsBeforeConcatenating() {
+		InspectionContext context = TestSources.parse("""
+				class Sample { String build(String[] value, int number) {
+				    StringBuilder result = new StringBuilder();
+				    result.append(value).append(number);
+				    return result.toString();
+				} }
+				""");
+		assertTrue(new ReplaceStringBuilderWithStringTool().inspect(context, true).changed());
+		assertTrue(TestSources.print(context).contains("String result = String.valueOf(value) + number;"));
+	}
+
+	@Test
 	void keepsConditionalOrEscapingBuilders() {
 		InspectionContext conditional = TestSources.parse("""
 				class Sample { String build(boolean enabled) {

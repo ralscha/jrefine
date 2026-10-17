@@ -80,7 +80,7 @@ class VerboseExpressionToolsTest {
 				}
 				""");
 		assertTrue(output.contains("return left + \" ; \" + right;"), output);
-		assertTrue(output.contains("return value;"), output);
+		assertTrue(output.contains("return value + \"\";"), output);
 
 		InspectionContext conversion = TestSources.parse("""
 				class Sample { String value(int number) { return "" + number; } }

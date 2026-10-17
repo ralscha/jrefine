@@ -6,6 +6,7 @@ import com.github.javaparser.ast.Node;
 import ch.rasc.jrefine.analysis.LineEndingSupport;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Objects;
@@ -14,21 +15,21 @@ import java.util.Objects;
  * Collects non-overlapping source edits addressed by JavaParser source ranges.
  *
  * <p>
- * Ranges are converted to offsets in the original source and applied from the end of the
- * file backwards. This keeps untouched formatting byte-for-byte stable.
+ * Ranges are converted to offsets in the original source. Unchanged spans and
+ * replacements are appended in source order, keeping untouched formatting byte-for-byte
+ * stable.
  * </p>
  */
 public final class SourceEditor {
 
 	private final String source;
 
-	private final int[] lineStarts;
+	private int[] lineStarts;
 
 	private final List<Edit> edits = new ArrayList<>();
 
 	public SourceEditor(String source) {
 		this.source = Objects.requireNonNull(source, "source");
-		this.lineStarts = findLineStarts(source);
 	}
 
 	/** Returns the unmodified source this editor addresses. */
@@ -39,7 +40,7 @@ public final class SourceEditor {
 	/** Returns the exact source text occupied by an inclusive JavaParser range. */
 	public String text(Range range) {
 		Objects.requireNonNull(range, "range");
-		return source.substring(this.offset(range.begin), this.offset(range.end) + 1);
+		return source.substring(this.offset(range.begin), this.endOffset(range));
 	}
 
 	/** Returns the exact source text occupied by a parsed node. */
@@ -74,10 +75,7 @@ public final class SourceEditor {
 		Objects.requireNonNull(range, "range");
 		Objects.requireNonNull(replacement, "replacement");
 		int start = this.offset(range.begin);
-		int endExclusive = this.offset(range.end) + 1;
-		if (endExclusive > source.length()) {
-			throw new IllegalArgumentException("Edit range ends outside the source: " + range);
-		}
+		int endExclusive = this.endOffset(range);
 		this.queue(start, endExclusive, replacement);
 	}
 
@@ -96,13 +94,13 @@ public final class SourceEditor {
 		while (start > 0 && isHorizontalWhitespace(source.charAt(start - 1))) {
 			start--;
 		}
-		this.queue(start, this.offset(range.end) + 1, "");
+		this.queue(start, this.endOffset(range), "");
 	}
 
 	/** Removes a range together with adjacent horizontal whitespace on its right. */
 	public void removeWithTrailingWhitespace(Range range) {
 		Objects.requireNonNull(range, "range");
-		int endExclusive = this.offset(range.end) + 1;
+		int endExclusive = this.endOffset(range);
 		while (endExclusive < source.length() && isHorizontalWhitespace(source.charAt(endExclusive))) {
 			endExclusive++;
 		}
@@ -125,7 +123,7 @@ public final class SourceEditor {
 	public void removeLine(Range range) {
 		Objects.requireNonNull(range, "range");
 		int start = this.offset(range.begin);
-		int endExclusive = this.offset(range.end) + 1;
+		int endExclusive = this.endOffset(range);
 		int lineStart = lineStarts[range.begin.line - 1];
 		int lineEndExclusive = range.end.line < lineStarts.length ? lineStarts[range.end.line] : source.length();
 
@@ -148,7 +146,9 @@ public final class SourceEditor {
 			return source;
 		}
 
-		List<Edit> ordered = edits.stream().sorted(Comparator.comparingInt(Edit::start)).toList();
+		List<Edit> ordered = edits.stream()
+			.sorted(Comparator.comparingInt(Edit::start).thenComparingInt(Edit::endExclusive))
+			.toList();
 		for (int index = 1; index < ordered.size(); index++) {
 			Edit previous = ordered.get(index - 1);
 			Edit current = ordered.get(index);
@@ -157,23 +157,38 @@ public final class SourceEditor {
 			}
 		}
 
-		StringBuilder output = new StringBuilder(source);
-		for (int index = ordered.size() - 1; index >= 0; index--) {
-			Edit edit = ordered.get(index);
-			output.replace(edit.start(), edit.endExclusive(), edit.replacement());
+		StringBuilder output = new StringBuilder(source.length());
+		int offset = 0;
+		for (Edit edit : ordered) {
+			output.append(source, offset, edit.start());
+			output.append(edit.replacement());
+			offset = edit.endExclusive();
 		}
+		output.append(source, offset, source.length());
 		return output.toString();
 	}
 
 	private int offset(Position position) {
+		if (lineStarts == null) {
+			lineStarts = findLineStarts(source);
+		}
 		if (position.line < 1 || position.line > lineStarts.length) {
 			throw new IllegalArgumentException("Edit line is outside the source: " + position);
 		}
-		int offset = lineStarts[position.line - 1] + position.column - 1;
-		if (offset < 0 || offset > source.length()) {
+		int lineStart = lineStarts[position.line - 1];
+		int lastOffset = position.line < lineStarts.length ? lineStarts[position.line] - 1 : source.length();
+		if (position.column < 1 || position.column - 1 > lastOffset - lineStart) {
 			throw new IllegalArgumentException("Edit column is outside the source: " + position);
 		}
-		return offset;
+		return lineStart + position.column - 1;
+	}
+
+	private int endOffset(Range range) {
+		int end = this.offset(range.end);
+		if (end == source.length()) {
+			throw new IllegalArgumentException("Edit range ends outside the source: " + range);
+		}
+		return end + 1;
 	}
 
 	private void queue(int start, int endExclusive, String replacement) {
@@ -185,21 +200,24 @@ public final class SourceEditor {
 	}
 
 	private static int[] findLineStarts(String source) {
-		ArrayList<Integer> starts = new ArrayList<>();
-		starts.add(0);
+		int[] starts = new int[128];
+		int size = 1;
 		for (int index = 0; index < source.length(); index++) {
 			char character = source.charAt(index);
 			if (character == LineEndingSupport.CARRIAGE_RETURN_CHAR) {
 				if (index + 1 < source.length() && source.charAt(index + 1) == LineEndingSupport.LINE_FEED_CHAR) {
 					index++;
 				}
-				starts.add(index + 1);
 			}
-			else if (character == LineEndingSupport.LINE_FEED_CHAR) {
-				starts.add(index + 1);
+			else if (character != LineEndingSupport.LINE_FEED_CHAR) {
+				continue;
 			}
+			if (size == starts.length) {
+				starts = Arrays.copyOf(starts, starts.length * 2);
+			}
+			starts[size++] = index + 1;
 		}
-		return starts.stream().mapToInt(Integer::intValue).toArray();
+		return Arrays.copyOf(starts, size);
 	}
 
 	private record Edit(int start, int endExclusive, String replacement) {

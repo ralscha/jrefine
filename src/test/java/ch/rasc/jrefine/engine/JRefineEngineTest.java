@@ -2,6 +2,10 @@ package ch.rasc.jrefine.engine;
 
 import ch.rasc.jrefine.api.Severity;
 import ch.rasc.jrefine.api.JavaVersion;
+import ch.rasc.jrefine.api.InspectionContext;
+import ch.rasc.jrefine.api.InspectionTool;
+import ch.rasc.jrefine.api.ToolResult;
+import com.github.javaparser.Position;
 import ch.rasc.jrefine.tools.declarations.RemoveUnusedImportsTool;
 import ch.rasc.jrefine.tools.expressions.UseIsEmptyTool;
 import ch.rasc.jrefine.tools.expressions.UseExpressionLambdaTool;
@@ -115,6 +119,46 @@ class JRefineEngineTest {
 
 		ModernizationReport report = new JRefineEngine().run(source, List.of(new RemoveUnusedImportsTool()), true);
 
+		assertEquals(1, report.errors().size());
+		assertEquals(original, Files.readString(source));
+	}
+
+	@Test
+	void discardsAllFixesWhenAToolQueuesUnreportedEdits() throws IOException {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		String original = "import java.util.List; class Sample {}";
+		Files.writeString(source, original);
+		InspectionTool broken = new InspectionTool() {
+			@Override
+			public String id() {
+				return "broken";
+			}
+
+			@Override
+			public String description() {
+				return "Queues an edit without reporting it";
+			}
+
+			@Override
+			public ToolResult inspect(InspectionContext context, boolean applyFixes) {
+				context.editor().insert(Position.HOME, "// unexpected edit\n");
+				return new ToolResult(List.of(), false);
+			}
+		};
+		ModernizationReport report = new JRefineEngine().run(source, List.of(new RemoveUnusedImportsTool(), broken),
+				true);
+		assertEquals(1, report.errors().size());
+		assertEquals(0, report.changedFiles());
+		assertTrue(report.findings().stream().noneMatch(ReportedFinding::fixed));
+		assertEquals(original, Files.readString(source));
+	}
+
+	@Test
+	void validatesSourceInApplyModeEvenWhenNoToolsAreSelected() throws IOException {
+		Path source = temporaryDirectory.resolve("Broken.java");
+		String original = "class Broken {";
+		Files.writeString(source, original);
+		ModernizationReport report = new JRefineEngine().run(source, List.of(), true);
 		assertEquals(1, report.errors().size());
 		assertEquals(original, Files.readString(source));
 	}

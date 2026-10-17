@@ -234,7 +234,7 @@ public final class ReplaceStringBuilderWithStringTool implements InspectionTool 
 		for (int index = 0; index < parts.size(); index++) {
 			Expression part = parts.get(index);
 			String text = context.editor().text(part);
-			if (index == 0 && !definitelyString(context, part) || isCharArray(context, part)) {
+			if (index == 0 && (parts.size() == 1 || !definitelyString(context, part)) || isCharArray(context, part)) {
 				text = "String.valueOf(" + text + ")";
 			}
 			result.add(text);
@@ -257,7 +257,8 @@ public final class ReplaceStringBuilderWithStringTool implements InspectionTool 
 		else if (currentExpression instanceof CastExpr cast) {
 			type = cast.getType().asString();
 		}
-		return type != null && TypeLookup.isKnownJavaLangType(context.compilationUnit(), type, Set.of("String"));
+		return type != null && !type.endsWith("[]")
+				&& TypeLookup.isKnownJavaLangType(context.compilationUnit(), type, Set.of("String"));
 	}
 
 	private static boolean isCharArray(InspectionContext context, Expression expression) {

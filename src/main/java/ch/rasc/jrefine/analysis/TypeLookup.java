@@ -5,11 +5,8 @@ import java.util.List;
 import com.github.javaparser.Position;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.CompilationUnit;
-import com.github.javaparser.ast.body.AnnotationDeclaration;
 import com.github.javaparser.ast.body.CallableDeclaration;
-import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
-import com.github.javaparser.ast.body.EnumDeclaration;
-import com.github.javaparser.ast.body.RecordDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
 import com.github.javaparser.ast.body.FieldDeclaration;
 import com.github.javaparser.ast.body.InitializerDeclaration;
 import com.github.javaparser.ast.body.Parameter;
@@ -121,25 +118,15 @@ public final class TypeLookup {
 	}
 
 	public static boolean isKnownJavaUtilType(CompilationUnit root, String type, Set<String> allowed) {
-		String raw = rawType(type);
-		String simple = simpleType(raw);
-		if (!allowed.contains(simple) || declaresType(root, simple)) {
-			return false;
-		}
-		if (raw.contains(".")) {
-			return raw.startsWith("java.util.");
-		}
-		List<ImportDeclaration> explicit = root.getImports()
-			.stream()
-			.filter(imported -> !imported.isAsterisk() && imported.getName().getIdentifier().equals(simple))
-			.toList();
-		if (!explicit.isEmpty()) {
-			return explicit.stream().allMatch(imported -> imported.getNameAsString().startsWith("java.util."));
-		}
-		return root.getImports()
-			.stream()
-			.anyMatch(imported -> imported.isAsterisk() && ("java.util".equals(imported.getNameAsString())
-					|| imported.getNameAsString().startsWith("java.util.")));
+		String packageName = switch (simpleName(type)) {
+			case "Function" -> "java.util.function";
+			case "Stream", "IntStream", "LongStream", "DoubleStream" -> "java.util.stream";
+			case "ConcurrentMap", "ConcurrentNavigableMap", "ConcurrentHashMap", "ConcurrentSkipListMap",
+					"ConcurrentSkipListSet", "CopyOnWriteArrayList", "CopyOnWriteArraySet" ->
+				"java.util.concurrent";
+			default -> "java.util";
+		};
+		return isKnownType(root, type, packageName, allowed);
 	}
 
 	public static boolean isKnownJavaLangType(CompilationUnit root, String type, Set<String> allowed) {
@@ -206,27 +193,28 @@ public final class TypeLookup {
 	}
 
 	private static String erasedType(String type) {
-		String currentType = type;
-		int generic = currentType.indexOf('<');
-		if (generic >= 0) {
-			currentType = currentType.substring(0, generic);
+		if (type.indexOf('<') < 0) {
+			return type;
 		}
-		return currentType;
+		StringBuilder erased = new StringBuilder(type.length());
+		int depth = 0;
+		for (int index = 0; index < type.length(); index++) {
+			char character = type.charAt(index);
+			if (character == '<') {
+				depth++;
+			}
+			else if (character == '>') {
+				depth--;
+			}
+			else if (depth == 0) {
+				erased.append(character);
+			}
+		}
+		return erased.toString();
 	}
 
 	private static boolean declaresType(CompilationUnit root, String simpleName) {
-		return root.findAll(ClassOrInterfaceDeclaration.class)
-			.stream()
-			.anyMatch(type -> type.getNameAsString().equals(simpleName))
-				|| root.findAll(EnumDeclaration.class)
-					.stream()
-					.anyMatch(type -> type.getNameAsString().equals(simpleName))
-				|| root.findAll(AnnotationDeclaration.class)
-					.stream()
-					.anyMatch(type -> type.getNameAsString().equals(simpleName))
-				|| root.findAll(RecordDeclaration.class)
-					.stream()
-					.anyMatch(type -> type.getNameAsString().equals(simpleName));
+		return root.findFirst(TypeDeclaration.class, type -> type.getNameAsString().equals(simpleName)).isPresent();
 	}
 
 	private static Optional<Node> variableOwner(VariableDeclarator variable) {

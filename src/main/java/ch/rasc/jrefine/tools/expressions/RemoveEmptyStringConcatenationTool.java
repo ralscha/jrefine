@@ -4,7 +4,10 @@ import java.util.List;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
+import com.github.javaparser.ast.expr.TextBlockLiteralExpr;
 import ch.rasc.jrefine.analysis.AstSupport;
+import ch.rasc.jrefine.analysis.NumericSupport;
+import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -68,7 +71,10 @@ public final class RemoveEmptyStringConcatenationTool implements InspectionTool 
 		else {
 			return Optional.empty();
 		}
-		if (!stringExpression(context, replacement, binary) && !parentProvidesStringContext(context, binary)) {
+		boolean nonNullString = replacement instanceof StringLiteralExpr || replacement instanceof TextBlockLiteralExpr
+				|| replacement instanceof BinaryExpr && stringExpression(context, replacement, binary);
+		if (!nonNullString && !(parentProvidesStringContext(context, binary)
+				&& safeStringConversion(context, replacement, binary))) {
 			return Optional.empty();
 		}
 		return Optional.of(new Candidate(binary, replacement));
@@ -85,15 +91,29 @@ public final class RemoveEmptyStringConcatenationTool implements InspectionTool 
 	}
 
 	private static boolean stringExpression(InspectionContext context, Expression expression, Node use) {
-		if (expression instanceof StringLiteralExpr) {
+		if (expression instanceof StringLiteralExpr || expression instanceof TextBlockLiteralExpr) {
 			return true;
 		}
 		if (expression instanceof BinaryExpr binary && binary.getOperator() == BinaryExpr.Operator.PLUS) {
 			return stringExpression(context, binary.getLeft(), use)
 					|| stringExpression(context, binary.getRight(), use);
 		}
-		String type = ExpressionToolSupport.visibleSimpleType(context, expression, use).orElse("");
-		return ExpressionToolSupport.knownType(context.compilationUnit(), type, "java.lang", Set.of("String"));
+		String type = TypeLookup.visibleTypePreservingArrays(context.compilationUnit(), expression, use).orElse("");
+		return !type.endsWith("[]")
+				&& TypeLookup.isKnownJavaLangType(context.compilationUnit(), type, Set.of("String"));
+	}
+
+	private static boolean safeStringConversion(InspectionContext context, Expression expression, Node use) {
+		if (stringExpression(context, expression, use)) {
+			return true;
+		}
+		// User-defined toString calls must remain before evaluation of the next operand.
+		return NumericSupport.typeOf(context, expression, use)
+			.filter(type -> Set.of("boolean", "byte", "short", "char", "int", "long", "float", "double").contains(type))
+			.filter(type -> TypeLookup.visibleTypePreservingArrays(context.compilationUnit(), expression, use)
+				.map(declared -> !declared.endsWith("[]"))
+				.orElse(true))
+			.isPresent();
 	}
 
 	private static boolean empty(Expression expression) {

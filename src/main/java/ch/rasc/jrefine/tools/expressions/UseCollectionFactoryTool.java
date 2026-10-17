@@ -7,7 +7,6 @@ import com.github.javaparser.ast.expr.FieldAccessExpr;
 import com.github.javaparser.ast.expr.LiteralExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.NullLiteralExpr;
-import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.analysis.ImportSupport;
 import ch.rasc.jrefine.analysis.TypeLookup;
@@ -21,6 +20,7 @@ import java.util.HashMap;
 import java.util.Optional;
 import java.util.Set;
 import java.util.List;
+import java.util.stream.Collectors;
 
 /** Replaces legacy unmodifiable collection wrappers with collection factories. */
 public final class UseCollectionFactoryTool implements InspectionTool {
@@ -67,8 +67,7 @@ public final class UseCollectionFactoryTool implements InspectionTool {
 				String arguments = candidate.arguments()
 					.stream()
 					.map(context.editor()::text)
-					.reduce((left, right) -> left + ", " + right)
-					.orElse("");
+					.collect(Collectors.joining(", "));
 				context.editor()
 					.replace(candidate.expression().getRange().orElseThrow(),
 							names.get(candidate.factory()) + "." + candidate.method() + "(" + arguments + ")");
@@ -78,7 +77,7 @@ public final class UseCollectionFactoryTool implements InspectionTool {
 	}
 
 	private static Optional<Candidate> candidate(InspectionContext context, MethodCallExpr call) {
-		if (call.getArguments().size() != 1 || call.getScope().isEmpty()
+		if (call.getArguments().size() != 1 || call.getScope().isEmpty() || call.getTypeArguments().isPresent()
 				|| !knownUtilType(context, call.getScope().orElseThrow().toString(), "Collections")
 				|| AstSupport.hasComment(context, call)) {
 			return Optional.empty();
@@ -110,19 +109,9 @@ public final class UseCollectionFactoryTool implements InspectionTool {
 			return Optional.of(new Candidate(call, factory, "of", java.util.List.of(inner.getArgument(0)),
 					"Use immutable collection factory"));
 		}
-		if (argument instanceof ObjectCreationExpr creation && creation.getArguments().size() == 1
-				&& creation.getAnonymousClassBody().isEmpty()) {
-			String expected = switch (factory) {
-				case "List" -> "ArrayList";
-				case "Set" -> "HashSet";
-				case "Map" -> "HashMap";
-				default -> "";
-			};
-			if (knownUtilType(context, creation.getType().asString(), expected)) {
-				return Optional.of(new Candidate(call, factory, "copyOf", java.util.List.of(creation.getArgument(0)),
-						"Use immutable collection factory"));
-			}
-		}
+		// Copy constructors accept null elements, keys, and values; copyOf does not.
+		// A single constructor argument can also be an initial capacity, not a
+		// collection.
 		return Optional.empty();
 	}
 
@@ -143,7 +132,7 @@ public final class UseCollectionFactoryTool implements InspectionTool {
 
 	private static boolean knownStaticCall(InspectionContext context, MethodCallExpr call, String owner,
 			String method) {
-		return call.getNameAsString().equals(method) && call.getScope().isPresent()
+		return call.getNameAsString().equals(method) && call.getScope().isPresent() && call.getTypeArguments().isEmpty()
 				&& knownUtilType(context, call.getScope().orElseThrow().toString(), owner);
 	}
 

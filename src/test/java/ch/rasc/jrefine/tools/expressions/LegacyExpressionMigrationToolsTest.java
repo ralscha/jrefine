@@ -72,7 +72,7 @@ class LegacyExpressionMigrationToolsTest {
 				""");
 
 		assertTrue(output.contains("List.of(\"a\", \"b\")"), output);
-		assertTrue(output.contains("List.copyOf(input)"), output);
+		assertTrue(output.contains("Collections.unmodifiableList(new ArrayList<>(input))"), output);
 	}
 
 	@Test

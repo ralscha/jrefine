@@ -7,8 +7,7 @@ surrounding source layout.
 
 The 210 built-in tools cover five responsibilities: declarations, control flow, expressions,
 syntax, and types. See the [complete list of built-in tools](#built-in-tools), or run
-`--list-tools` for their CLI descriptions. [ROADMAP.md](ROADMAP.md) contains the complete IntelliJ
-Java inspection inventory, implementation mapping, and future candidates.
+`--list-tools` for their CLI descriptions.
 
 ## Installation
 
@@ -81,8 +80,8 @@ java -jar target/jrefine.jar --target-java 17 --apply path/to/project
 Supported targets are Java 8, 11, 17, 21, and 25. Java 25 is the default.
 
 Use `--threads N` to control file-level parallelism and `--timings` to print aggregate per-tool
-execution time. Check-only runs parse each file once; apply mode intentionally reparses between fix
-rounds so independent transformations compose safely.
+execution time. Check-only runs parse each file once; apply mode reuses the parsed source until a
+tool changes it, then reparses before the next inspection so transformations compose safely.
 
 ### Project configuration and suppressions
 
@@ -116,8 +115,9 @@ java -jar target/jrefine.jar --list-tools
 java -jar target/jrefine.jar --help
 ```
 
-Check mode exits with `1` when it finds issues, making it useful in CI. A successful apply exits
-with `0`; invalid arguments, parse failures, and I/O failures exit with `2`. Directories commonly
+Check mode exits with `1` when it finds issues, making it useful in CI. Apply mode exits with `0`
+when all reported issues were fixed, or `1` when findings remain without an applied fix.
+Invalid arguments, parse failures, and I/O failures exit with `2`. Directories commonly
 used for generated or third-party files (`target`, `build`, `out`, `node_modules`, and hidden tool
 directories) are skipped.
 

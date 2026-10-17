@@ -17,6 +17,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
@@ -131,8 +132,9 @@ public final class JRefineEngine {
 		}
 
 		ArrayList<ReportedFinding> findings = new ArrayList<>();
+		Set<String> suppressed = ToolSuppression.suppressedTools(compilationUnit);
 		for (InspectionTool tool : tools) {
-			if (ToolSuppression.isSuppressed(compilationUnit, tool.id())) {
+			if (ToolSuppression.isSuppressed(suppressed, tool.id())) {
 				continue;
 			}
 			try {
@@ -162,18 +164,26 @@ public final class JRefineEngine {
 		boolean inspectionFailed = false;
 		ArrayList<ReportedFinding> fileFindings = new ArrayList<>();
 		ArrayList<ProcessingError> errors = new ArrayList<>();
+		CompilationUnit compilationUnit = parseSource(parser, currentSource, sourceFile, errors);
+		if (compilationUnit == null) {
+			return new FileOutcome(List.of(), errors, false);
+		}
+		Set<String> suppressed = ToolSuppression.suppressedTools(compilationUnit);
 
 		for (InspectionTool tool : tools) {
 			try {
 				int fixRound = 0;
 				boolean rerun;
 				do {
-					CompilationUnit compilationUnit = parseSource(parser, currentSource, sourceFile, errors);
 					if (compilationUnit == null) {
-						inspectionFailed = true;
-						break;
+						compilationUnit = parseSource(parser, currentSource, sourceFile, errors);
+						if (compilationUnit == null) {
+							inspectionFailed = true;
+							break;
+						}
+						suppressed = ToolSuppression.suppressedTools(compilationUnit);
 					}
-					if (ToolSuppression.isSuppressed(compilationUnit, tool.id())) {
+					if (ToolSuppression.isSuppressed(suppressed, tool.id())) {
 						rerun = false;
 						continue;
 					}
@@ -181,6 +191,9 @@ public final class JRefineEngine {
 					InspectionContext context = new InspectionContext(sourceFile, compilationUnit, editor,
 							options.targetJava());
 					ToolResult result = inspectTimed(tool, context, true, timings);
+					if (!result.changed() && editor.hasEdits()) {
+						throw new IllegalStateException("A tool produced source edits but reported no change");
+					}
 					result.findings()
 						.forEach(finding -> fileFindings.add(new ReportedFinding(sourceFile, tool.id(), finding,
 								options.severity(tool), result.changed())));
@@ -194,6 +207,7 @@ public final class JRefineEngine {
 							throw new IllegalStateException("A tool reported a change but left the source unchanged");
 						}
 						currentSource = rendered;
+						compilationUnit = null;
 						fileChanged = true;
 						fixRound++;
 						if (fixRound >= MAX_FIX_ROUNDS_PER_TOOL) {
