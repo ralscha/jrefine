@@ -77,12 +77,12 @@ public final class MergeDuplicateSwitchBranchesTool implements InspectionTool {
 		}
 		for (int left = 0; left < entries.size(); left++) {
 			SwitchEntry first = entries.get(left);
-			if (first.isDefault() || first.getLabels().isEmpty()) {
+			if (!mergeableLabels(first)) {
 				continue;
 			}
 			for (int right = left + 1; right < entries.size(); right++) {
 				SwitchEntry second = entries.get(right);
-				if (second.isDefault() || second.getLabels().isEmpty() || first.getType() != second.getType()
+				if (!mergeableLabels(second) || first.getType() != second.getType()
 						|| !first.getStatements().equals(second.getStatements())
 						|| !first.getGuard().equals(second.getGuard())) {
 					continue;
@@ -97,6 +97,13 @@ public final class MergeDuplicateSwitchBranchesTool implements InspectionTool {
 			}
 		}
 		return Optional.empty();
+	}
+
+	private static boolean mergeableLabels(SwitchEntry entry) {
+		return !entry.isDefault() && !entry.getLabels().isEmpty() && entry.getGuard().isEmpty() && entry.getLabels()
+			.stream()
+			.noneMatch(
+					label -> label.isNullLiteralExpr() || label instanceof com.github.javaparser.ast.expr.PatternExpr);
 	}
 
 	private static NodeList<SwitchEntry> entries(Node node) {

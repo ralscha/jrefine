@@ -1,6 +1,7 @@
 package ch.rasc.jrefine.tools.expressions;
 
 import java.util.List;
+import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.api.Finding;
@@ -31,6 +32,7 @@ public final class UseListSortTool implements InspectionTool {
 			.filter(call -> "sort".equals(call.getNameAsString()) && call.getScope().isPresent())
 			.filter(call -> call.getArguments().size() == 1 || call.getArguments().size() == 2)
 			.filter(call -> isJavaUtilCollections(context, call.getScope().orElseThrow().toString()))
+			.filter(call -> !needsTargetType(call.getArgument(0)))
 			.filter(call -> !AstSupport.hasComment(context, call))
 			.toList();
 		ArrayList<Finding> findings = new ArrayList<>();
@@ -39,12 +41,34 @@ public final class UseListSortTool implements InspectionTool {
 			if (applyFixes) {
 				String comparator = call.getArguments().size() == 2 ? context.editor().text(call.getArgument(1))
 						: "null";
-				context.editor()
-					.replace(call.getRange().orElseThrow(),
-							context.editor().text(call.getArgument(0)) + ".sort(" + comparator + ")");
+				Expression argument = call.getArgument(0);
+				String receiver = context.editor().text(argument);
+				if (argument.isCastExpr() || argument.isConditionalExpr() || argument.isAssignExpr()) {
+					receiver = "(" + receiver + ")";
+				}
+				context.editor().replace(call.getRange().orElseThrow(), receiver + ".sort(" + comparator + ")");
 			}
 		}
 		return ToolResult.of(findings, applyFixes);
+	}
+
+	private static boolean needsTargetType(Expression expression) {
+		if (expression.isEnclosedExpr()) {
+			return needsTargetType(expression.asEnclosedExpr().getInner());
+		}
+		if (expression.isConditionalExpr()) {
+			return needsTargetType(expression.asConditionalExpr().getThenExpr())
+					|| needsTargetType(expression.asConditionalExpr().getElseExpr());
+		}
+		// A receiver has no invocation target type. Keep calls and diamond expressions
+		// whose inferred element type may depend on Collections.sort's comparator.
+		if (expression.isMethodCallExpr()) {
+			return expression.asMethodCallExpr().getTypeArguments().isEmpty();
+		}
+		if (expression.isObjectCreationExpr()) {
+			return expression.asObjectCreationExpr().getType().isUsingDiamondOperator();
+		}
+		return expression.isNullLiteralExpr() || expression.isSwitchExpr();
 	}
 
 	private static boolean isJavaUtilCollections(InspectionContext context, String scope) {

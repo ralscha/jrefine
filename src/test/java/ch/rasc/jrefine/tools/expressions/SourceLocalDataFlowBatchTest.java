@@ -16,6 +16,63 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class SourceLocalDataFlowBatchTest {
 
 	@Test
+	void keepsDeclarationGroupsWithASharedFirstUse() {
+		InspectionContext context = TestSources.parse("""
+				class Sample {
+				    void run() {
+				        String first = "first";
+				        String second = "second";
+				        String third = "third";
+				        consume(first, second, third);
+				    }
+				    void consume(String... values) {}
+				}
+				""");
+		assertFalse(new NarrowVariableScopeTool().inspect(context, true).changed());
+	}
+
+	@Test
+	void convergesWhenSeveralDeclarationsMovePastTheSameStatement() {
+		String source = """
+				class Sample {
+				    void run() {
+				        int first = 1;
+				        int second = 2;
+				        work();
+				        consume(first, second);
+				    }
+				    void consume(int... values) {}
+				    void work() {}
+				}
+				""";
+		for (int round = 0; round < 3; round++) {
+			InspectionContext context = TestSources.parse(source);
+			new NarrowVariableScopeTool().inspect(context, true);
+			source = TestSources.print(context);
+		}
+		InspectionContext result = TestSources.parse(source);
+		assertFalse(new NarrowVariableScopeTool().inspect(result, true).changed());
+		assertTrue(source.indexOf("work();") < source.indexOf("int first"), source);
+		assertTrue(source.indexOf("work();") < source.indexOf("int second"), source);
+	}
+
+	@Test
+	void keepsPotentiallyThrowingUnboxingBeforeOtherWork() {
+		InspectionContext context = TestSources.parse("""
+				class Sample {
+				    void run(Integer input) {
+				        int value = input;
+				        work();
+				        consume(value);
+				    }
+				    void consume(int value) {}
+				    void work() {}
+				}
+				""");
+		assertFalse(new NarrowVariableScopeTool().inspect(context, true).changed());
+	}
+
+	@Test
 	void movesAnInertDeclarationImmediatelyBeforeItsFirstUse() {
 		String output = apply(new NarrowVariableScopeTool(), """
 				class Sample {

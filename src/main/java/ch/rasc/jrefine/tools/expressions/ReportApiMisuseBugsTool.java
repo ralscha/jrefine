@@ -3,6 +3,8 @@ package ch.rasc.jrefine.tools.expressions;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.ClassOrInterfaceDeclaration;
 import com.github.javaparser.ast.body.MethodDeclaration;
+import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.expr.AssignExpr;
 import com.github.javaparser.ast.expr.ArrayCreationExpr;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.CastExpr;
@@ -24,12 +26,14 @@ import com.github.javaparser.ast.stmt.ReturnStmt;
 import com.github.javaparser.ast.stmt.Statement;
 import com.github.javaparser.ast.stmt.SwitchEntry;
 import com.github.javaparser.ast.stmt.ThrowStmt;
+import com.github.javaparser.ast.stmt.TryStmt;
 import ch.rasc.jrefine.analysis.NumericSupport;
 import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
 import ch.rasc.jrefine.api.ToolResult;
+import ch.rasc.jrefine.tools.controlflow.ReportTestAssertionBugsTool;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -184,13 +188,13 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 			if (!Set.of("Optional", "OptionalInt", "OptionalLong", "OptionalDouble").contains(type)) {
 				continue;
 			}
-			if (!guarded(call, optional.getNameAsString())) {
+			if (!insideAssertion(context, call) && !guarded(context, call, optional.getNameAsString())) {
 				findings.add(Finding.at(call, "Optional.get() is called without a matching presence check"));
 			}
 		}
 	}
 
-	private static boolean guarded(MethodCallExpr call, String name) {
+	private static boolean guarded(InspectionContext context, MethodCallExpr call, String name) {
 		if (shortCircuitGuard(call, name)) {
 			return true;
 		}
@@ -204,17 +208,57 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 					return true;
 				}
 			}
-			if (parent.orElseThrow() instanceof IfStmt statement && statement.getThenStmt().isAncestorOf(call)
-					&& statement.getCondition()
-						.findAll(MethodCallExpr.class)
-						.stream()
-						.anyMatch(check -> "isPresent".equals(check.getNameAsString())
-								&& check.getScope().filter(scope -> scope.toString().equals(name)).isPresent())) {
-				return true;
+			if (parent.orElseThrow() instanceof IfStmt statement) {
+				if (statement.getThenStmt().isAncestorOf(call) && presentImpliesTrue(statement.getCondition(), name)
+						|| statement.getElseStmt().filter(branch -> branch.isAncestorOf(call)).isPresent()
+								&& absentImpliesTrue(statement.getCondition(), name)
+						|| immediateAliasGuard(statement, call, name)) {
+					return true;
+				}
 			}
 			parent = parent.orElseThrow().getParentNode();
 		}
-		return precedingAbsenceExit(call, name);
+		return precedingPresence(context, call, name);
+	}
+
+	private static boolean immediateAliasGuard(IfStmt guard, MethodCallExpr call, String name) {
+		Expression condition = unwrap(guard.getCondition());
+		boolean negated = condition instanceof UnaryExpr unary
+				&& unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT;
+		Expression value = negated ? unwrap(condition.asUnaryExpr().getExpression()) : condition;
+		if (!(value instanceof NameExpr alias) || !(guard.getParentNode().orElse(null) instanceof BlockStmt block)) {
+			return false;
+		}
+		int index = block.getStatements().indexOf(guard);
+		if (index <= 0 || !(block.getStatement(index - 1) instanceof ExpressionStmt previous)) {
+			return false;
+		}
+		Expression assigned = null;
+		if (previous.getExpression() instanceof AssignExpr assignment
+				&& assignment.getOperator() == AssignExpr.Operator.ASSIGN
+				&& assignment.getTarget() instanceof NameExpr target
+				&& target.getNameAsString().equals(alias.getNameAsString())) {
+			assigned = assignment.getValue();
+		}
+		else if (previous.getExpression().isVariableDeclarationExpr()) {
+			assigned = previous.getExpression()
+				.asVariableDeclarationExpr()
+				.getVariables()
+				.stream()
+				.filter(variable -> variable.getNameAsString().equals(alias.getNameAsString()))
+				.flatMap(variable -> variable.getInitializer().stream())
+				.findFirst()
+				.orElse(null);
+		}
+		if (assigned == null) {
+			return false;
+		}
+		boolean inThen = guard.getThenStmt().isAncestorOf(call);
+		Statement branch = inThen ? guard.getThenStmt() : guard.getElseStmt().orElse(null);
+		if (branch == null || !branch.isAncestorOf(call) || assignsName(branch, name)) {
+			return false;
+		}
+		return inThen != negated ? presentImpliesTrue(assigned, name) : absentImpliesTrue(assigned, name);
 	}
 
 	private static boolean shortCircuitGuard(MethodCallExpr call, String name) {
@@ -239,7 +283,7 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 		return false;
 	}
 
-	private static boolean precedingAbsenceExit(MethodCallExpr call, String name) {
+	private static boolean precedingPresence(InspectionContext context, MethodCallExpr call, String name) {
 		Node current = call;
 		while (true) {
 			BlockStmt block = current.findAncestor(BlockStmt.class).orElse(null);
@@ -258,14 +302,104 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 				continue;
 			}
 			int useIndex = block.getStatements().indexOf(use);
+			boolean present = false;
 			for (int index = 0; index < useIndex; index++) {
+				Statement previous = block.getStatement(index);
+				if (assignsName(previous, name)) {
+					present = false;
+				}
 				if (block.getStatement(index) instanceof IfStmt guard && guard.getElseStmt().isEmpty()
 						&& absentImpliesTrue(guard.getCondition(), name) && terminates(guard.getThenStmt())) {
-					return true;
+					present = true;
 				}
+				if (previous instanceof ExpressionStmt expression) {
+					present |= assertionEstablishesPresence(context, expression.getExpression(), name);
+					if (expression.getExpression().isVariableDeclarationExpr()) {
+						for (var variable : expression.getExpression().asVariableDeclarationExpr().getVariables()) {
+							if (variable.getNameAsString().equals(name)) {
+								present = variable.getInitializer()
+									.filter(value -> optionalOf(context, value))
+									.isPresent();
+							}
+						}
+					}
+				}
+			}
+			if (present && !assignsName(use, name)) {
+				return true;
+			}
+			if (assignsName(use, name)) {
+				return false;
 			}
 			current = block;
 		}
+	}
+
+	private static boolean assignsName(Node node, String name) {
+		return node.findAll(AssignExpr.class)
+			.stream()
+			.anyMatch(assignment -> assignment.getTarget() instanceof NameExpr target
+					&& target.getNameAsString().equals(name));
+	}
+
+	private static boolean optionalOf(InspectionContext context, Expression expression) {
+		return unwrap(expression) instanceof MethodCallExpr factory && "of".equals(factory.getNameAsString())
+				&& factory.getArguments().size() == 1
+				&& factory.getScope()
+					.filter(scope -> ExpressionToolSupport.knownType(context.compilationUnit(), scope.toString(),
+							"java.util", Set.of("Optional", "OptionalInt", "OptionalLong", "OptionalDouble")))
+					.isPresent();
+	}
+
+	private static boolean insideAssertion(InspectionContext context, MethodCallExpr call) {
+		Node parent = call.getParentNode().orElse(null);
+		while (parent != null && !(parent instanceof Statement) && !(parent instanceof LambdaExpr)) {
+			if (parent instanceof MethodCallExpr outer
+					&& (ReportTestAssertionBugsTool.isJUnitAssertion(context, outer) || assertJ(context, outer))) {
+				return true;
+			}
+			parent = parent.getParentNode().orElse(null);
+		}
+		return false;
+	}
+
+	private static boolean assertionEstablishesPresence(InspectionContext context, Expression expression, String name) {
+		if (!(expression instanceof MethodCallExpr assertion)) {
+			return false;
+		}
+		if (ReportTestAssertionBugsTool.isJUnitAssertion(context, assertion)) {
+			return "assertTrue".equals(assertion.getNameAsString())
+					&& assertion.getArguments().stream().anyMatch(condition -> presentImpliesTrue(condition, name))
+					|| "assertFalse".equals(assertion.getNameAsString()) && assertion.getArguments()
+						.stream()
+						.anyMatch(condition -> absentImpliesTrue(condition, name));
+		}
+		return "isPresent".equals(assertion.getNameAsString()) && assertion.getArguments().isEmpty()
+				&& assertion.getScope()
+					.filter(scope -> scope instanceof MethodCallExpr entry && assertJ(context, entry)
+							&& entry.getArguments().size() == 1 && entry.getArgument(0).toString().equals(name))
+					.isPresent();
+	}
+
+	private static boolean assertJ(InspectionContext context, MethodCallExpr call) {
+		if (!"assertThat".equals(call.getNameAsString())) {
+			return false;
+		}
+		Set<String> owners = Set.of("Assertions", "AssertionsForClassTypes", "AssertionsForInterfaceTypes");
+		if (call.getScope().isPresent()) {
+			return ExpressionToolSupport.knownType(context.compilationUnit(), call.getScope().orElseThrow().toString(),
+					"org.assertj.core.api", owners);
+		}
+		TypeDeclaration<?> owner = call.findAncestor(TypeDeclaration.class).orElse(null);
+		if (owner != null && !owner.getMethodsByName("assertThat").isEmpty()) {
+			return false;
+		}
+		return context.compilationUnit()
+			.getImports()
+			.stream()
+			.anyMatch(imported -> imported.isStatic() && owners.stream()
+				.anyMatch(type -> imported.getNameAsString()
+					.equals("org.assertj.core.api." + type + (imported.isAsterisk() ? "" : ".assertThat"))));
 	}
 
 	private static boolean terminates(Statement statement) {
@@ -282,9 +416,8 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 		if (presenceCall(value, name, "isEmpty")) {
 			return true;
 		}
-		if (value instanceof UnaryExpr unary && unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT
-				&& presenceCall(unwrap(unary.getExpression()), name, "isPresent")) {
-			return true;
+		if (value instanceof UnaryExpr unary && unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
+			return presentImpliesTrue(unary.getExpression(), name);
 		}
 		return value instanceof BinaryExpr binary && binary.getOperator() == BinaryExpr.Operator.OR
 				&& (absentImpliesTrue(binary.getLeft(), name) || absentImpliesTrue(binary.getRight(), name));
@@ -292,12 +425,11 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 
 	private static boolean presentImpliesTrue(Expression expression, String name) {
 		Expression value = unwrap(expression);
-		if (presenceCall(value, name, "isPresent")) {
+		if (presenceCall(value, name, "isPresent") || filteredPresence(value, name)) {
 			return true;
 		}
-		if (value instanceof UnaryExpr unary && unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT
-				&& presenceCall(unwrap(unary.getExpression()), name, "isEmpty")) {
-			return true;
+		if (value instanceof UnaryExpr unary && unary.getOperator() == UnaryExpr.Operator.LOGICAL_COMPLEMENT) {
+			return absentImpliesTrue(unary.getExpression(), name);
 		}
 		return value instanceof BinaryExpr binary && binary.getOperator() == BinaryExpr.Operator.AND
 				&& (presentImpliesTrue(binary.getLeft(), name) || presentImpliesTrue(binary.getRight(), name));
@@ -307,6 +439,19 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 		return expression instanceof MethodCallExpr call && method.equals(call.getNameAsString())
 				&& call.getArguments().isEmpty()
 				&& call.getScope().filter(scope -> scope.toString().equals(name)).isPresent();
+	}
+
+	private static boolean filteredPresence(Expression expression, String name) {
+		if (!(expression instanceof MethodCallExpr check) || !"isPresent".equals(check.getNameAsString())
+				|| !check.getArguments().isEmpty()) {
+			return false;
+		}
+		Expression scope = check.getScope().orElse(null);
+		while (scope instanceof MethodCallExpr filter && "filter".equals(filter.getNameAsString())
+				&& filter.getArguments().size() == 1) {
+			scope = filter.getScope().orElse(null);
+		}
+		return scope instanceof NameExpr receiver && receiver.getNameAsString().equals(name);
 	}
 
 	private static Expression unwrap(Expression expression) {
@@ -322,6 +467,8 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 			.findAll(ExpressionStmt.class)
 			.stream()
 			.filter(statement -> !(statement.getParentNode().orElse(null) instanceof LambdaExpr))
+			.filter(statement -> !(statement.getParentNode().orElse(null) instanceof SwitchEntry entry
+					&& entry.getParentNode().orElse(null) instanceof com.github.javaparser.ast.expr.SwitchExpr))
 			.map(ExpressionStmt::getExpression)
 			.filter(MethodCallExpr.class::isInstance)
 			.map(MethodCallExpr.class::cast)
@@ -351,10 +498,33 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 		if (Set.of("valueOf", "parseInt", "parseLong").contains(method)
 				&& ExpressionToolSupport.knownType(context.compilationUnit(), scopeText, "java.lang",
 						Set.of("Integer", "Long", "Double", "Float", "Short", "Byte", "Boolean", "Character"))) {
-			return true;
+			return !validationCatch(context, call);
 		}
 		return PURE_OPTIONAL_METHODS.contains(method) && knownReceiverType(context, scope, call, "java.util",
 				Set.of("Optional", "OptionalInt", "OptionalLong", "OptionalDouble"));
+	}
+
+	private static boolean validationCatch(InspectionContext context, MethodCallExpr call) {
+		Node parent = call.getParentNode().orElse(null);
+		while (parent != null) {
+			if (parent instanceof LambdaExpr || parent instanceof MethodDeclaration) {
+				return false;
+			}
+			if (parent instanceof TryStmt attempt && attempt.getTryBlock().isAncestorOf(call) && attempt
+				.getCatchClauses()
+				.stream()
+				.anyMatch(caught -> caught.getParameter()
+					.getType()
+					.findAll(com.github.javaparser.ast.type.ClassOrInterfaceType.class)
+					.stream()
+					.anyMatch(type -> ExpressionToolSupport.knownType(context.compilationUnit(), type.asString(),
+							"java.lang", Set.of("NumberFormatException", "IllegalArgumentException", "RuntimeException",
+									"Exception", "Throwable"))))) {
+				return true;
+			}
+			parent = parent.getParentNode().orElse(null);
+		}
+		return false;
 	}
 
 	private static boolean knownReceiverType(InspectionContext context, Expression scope, MethodCallExpr call,
@@ -398,13 +568,18 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 	}
 
 	private static Optional<String> chronoUnit(InspectionContext context, MethodCallExpr call) {
-		if (call.getScope().isEmpty() || call.getArguments().isEmpty()) {
+		String method = call.getNameAsString();
+		int arguments = call.getArguments().size();
+		boolean unitLast = Set.of("plus", "minus", "until").contains(method) && arguments == 2;
+		boolean fieldFirst = "with".equals(method) && arguments == 2
+				|| Set.of("get", "getLong").contains(method) && arguments == 1;
+		if (call.getScope().isEmpty() || !unitLast && !fieldFirst) {
 			return Optional.empty();
 		}
 		String receiver = TypeLookup.visibleType(context.compilationUnit(), call.getScope().orElseThrow(), call)
 			.map(ReportApiMisuseBugsTool::simple)
 			.orElse("");
-		String constant = call.getArgument(call.getArguments().size() - 1).toString();
+		String constant = call.getArgument(unitLast ? 1 : 0).toString();
 		boolean date = Set.of("LocalDate", "Year", "YearMonth", "MonthDay").contains(receiver);
 		boolean time = Set.of("LocalTime", "OffsetTime").contains(receiver);
 		if (date && (constant.contains("HOUR") || constant.contains("MINUTE") || constant.contains("SECOND")
@@ -460,7 +635,7 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 				|| call.getArguments().isEmpty() || !(call.getArgument(0) instanceof StringLiteralExpr regex)) {
 			return Optional.empty();
 		}
-		return regex.asString().length() == 1 && ".[]{}()*+-?^$|\\".contains(regex.asString())
+		return regex.asString().length() == 1 && ".[{()*+?^$|\\".contains(regex.asString())
 				? Optional.of("Suspicious single regex metacharacter argument") : Optional.empty();
 	}
 
@@ -525,7 +700,7 @@ public final class ReportApiMisuseBugsTool implements InspectionTool {
 					.isPresent()) {
 			return Optional.of("Numeric thread priority can be replaced with a named magic constant");
 		}
-		if ("set".equals(call.getNameAsString()) && call.getArguments().size() >= 2
+		if ("set".equals(call.getNameAsString()) && call.getArguments().size() == 2
 				&& call.getArgument(0) instanceof IntegerLiteralExpr
 				&& call.getScope()
 					.filter(scope -> knownReceiverType(context, scope, call, "java.util", Set.of("Calendar")))

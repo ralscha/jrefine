@@ -56,7 +56,7 @@ public final class RemoveUnnecessaryModifiersTool implements InspectionTool {
 	private static boolean unnecessary(Modifier modifier) {
 		Node owner = modifier.getParentNode().orElse(null);
 		Keyword keyword = modifier.getKeyword();
-		if (keyword == Modifier.Keyword.PROTECTED && insideFinalType(owner)) {
+		if (keyword == Modifier.Keyword.PROTECTED && insideFinalType(owner) && !mayOverrideMethod(owner)) {
 			return true;
 		}
 		if (owner instanceof MethodDeclaration method) {
@@ -81,6 +81,20 @@ public final class RemoveUnnecessaryModifiersTool implements InspectionTool {
 			return keyword == Modifier.Keyword.PUBLIC || keyword == Modifier.Keyword.STATIC;
 		}
 		return false;
+	}
+
+	private static boolean mayOverrideMethod(Node owner) {
+		if (!(owner instanceof MethodDeclaration method)) {
+			return false;
+		}
+		// Final classes can still override inherited protected methods. Dropping
+		// protected then narrows their access and can make valid source uncompilable.
+		return method.getNameAsString().equals("clone") || method.getNameAsString().equals("finalize")
+				|| method.getParentNode()
+					.filter(ClassOrInterfaceDeclaration.class::isInstance)
+					.map(ClassOrInterfaceDeclaration.class::cast)
+					.filter(type -> !type.getExtendedTypes().isEmpty())
+					.isPresent();
 	}
 
 	private static boolean insideInterface(Node node) {

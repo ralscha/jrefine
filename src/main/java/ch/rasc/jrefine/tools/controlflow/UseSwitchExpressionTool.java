@@ -76,6 +76,11 @@ public final class UseSwitchExpressionTool implements InspectionTool {
 	}
 
 	private static Optional<Candidate> candidate(InspectionContext context, SwitchStmt statement) {
+		for (int index = 1; index < statement.getEntries().size(); index++) {
+			if (statement.getEntry(index).isDefault() && statement.getEntry(index - 1).getStatements().isEmpty()) {
+				return Optional.empty();
+			}
+		}
 		NodeList<SwitchEntry> entries = normalizedEntries(statement);
 		if (statement.getEntries().isEmpty() || AstSupport.hasComment(context, statement)
 				|| entries.stream().noneMatch(SwitchEntry::isDefault)
@@ -111,6 +116,10 @@ public final class UseSwitchExpressionTool implements InspectionTool {
 			}
 			if (statements.size() == 2 && (!(statements.get(1) instanceof BreakStmt breakStatement)
 					|| !breakStatement.getLabel().isEmpty())) {
+				return Optional.empty();
+			}
+			if (entry.getType() == SwitchEntry.Type.STATEMENT_GROUP && statements.size() == 1
+					&& entry != entries.getLast().orElseThrow()) {
 				return Optional.empty();
 			}
 			if (target == null) {

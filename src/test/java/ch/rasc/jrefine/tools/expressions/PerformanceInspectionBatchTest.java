@@ -37,15 +37,37 @@ class PerformanceInspectionBatchTest {
 				""");
 
 		assertTrue(output.contains("String[]::new"), output);
-		assertTrue(output.contains("Files.newInputStream(file.toPath())"), output);
-		assertTrue(output.contains("Boolean.valueOf(value)"), output);
-		assertTrue(output.contains("Sample.class"), output);
+		assertTrue(output.contains("new FileInputStream(file)"), output);
+		assertTrue(output.contains("new Boolean(value)"), output);
+		assertTrue(output.contains("new Sample().getClass()"), output);
 		assertTrue(output.contains("indexOf('x')"), output);
 		assertTrue(output.contains("builder.append(\"x\").append(value)"), output);
 		assertTrue(output.contains("Integer.parseInt(text)"), output);
 		assertTrue(output.contains("Integer.toString(value)"), output);
-		assertTrue(output.contains("random.nextInt(10)"), output);
-		assertTrue(output.contains("left == right"), output);
+		assertTrue(output.contains("random.nextDouble() * 10"), output);
+		assertTrue(output.contains("left.equals(right)"), output);
+	}
+
+	@Test
+	void preservesArrayOverloadsForJavaEightAndCustomReceivers() {
+		String source = """
+				import java.util.List;
+				class Sample {
+				    Object[] array(List<String> values) { return values.toArray(new String[0]); }
+				}
+				""";
+		InspectionContext parsed = TestSources.parse(source);
+		InspectionContext javaEight = new InspectionContext(parsed.path(), parsed.compilationUnit(), parsed.editor(),
+				ch.rasc.jrefine.api.JavaVersion.JAVA_8);
+		assertFalse(new OptimizePerformanceExpressionsTool().inspect(javaEight, true).changed());
+		assertTrue(TestSources.print(javaEight).contains("toArray(new String[0])"));
+		InspectionContext custom = TestSources.parse("""
+				class Custom {
+				    String[] toArray(String[] target) { return target; }
+				    String[] values(Custom source) { return source.toArray(new String[0]); }
+				}
+				""");
+		assertFalse(new OptimizePerformanceExpressionsTool().inspect(custom, true).changed());
 	}
 
 	@Test

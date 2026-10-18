@@ -101,8 +101,8 @@ class MigrationExpressionToolsTest {
 	}
 
 	@Test
-	void usesFilesStringMethodsAndStandardCharsetConstants() {
-		String files = apply(new UseFilesStringMethodsTool(), """
+	void reviewsFilesStringMethodsAndUsesStandardCharsetConstants() {
+		InspectionContext files = TestSources.parse("""
 				import java.nio.charset.Charset;
 				import java.nio.file.Files;
 				import java.nio.file.Path;
@@ -111,8 +111,10 @@ class MigrationExpressionToolsTest {
 				    Files.write(path, text.getBytes(charset));
 				} }
 				""");
-		assertTrue(files.contains("Files.readString(path, charset)"), files);
-		assertTrue(files.contains("Files.writeString(path, text, charset)"), files);
+		ToolResult review = new UseFilesStringMethodsTool().inspect(files, true);
+		assertFalse(review.changed());
+		assertTrue(review.findings().size() == 2, review.findings().toString());
+		assertTrue(TestSources.print(files).contains("Files.write(path, text.getBytes(charset))"));
 
 		String charset = apply(new UseStandardCharsetTool(), """
 				import java.nio.charset.Charset;
@@ -149,6 +151,22 @@ class MigrationExpressionToolsTest {
 				}
 				""");
 		assertTrue(staticReference.contains("Sample::normalize"), staticReference);
+	}
+
+	@Test
+	void keepsConstructorArgumentsExplicitInComputeIfAbsent() {
+		String source = """
+				import java.util.Map;
+				import java.text.SimpleDateFormat;
+				class Sample {
+				    SimpleDateFormat format(Map<String, SimpleDateFormat> formats, String pattern) {
+				        return formats.computeIfAbsent(pattern, key -> new SimpleDateFormat(key));
+				    }
+				}
+				""";
+		InspectionContext context = TestSources.parse(source);
+		assertFalse(new UseMethodReferenceTool().inspect(context, true).changed());
+		assertTrue(TestSources.print(context).contains("key -> new SimpleDateFormat(key)"));
 	}
 
 	@Test

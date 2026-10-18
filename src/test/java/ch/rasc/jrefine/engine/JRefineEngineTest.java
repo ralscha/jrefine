@@ -5,6 +5,11 @@ import ch.rasc.jrefine.api.JavaVersion;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
 import ch.rasc.jrefine.api.ToolResult;
+import ch.rasc.jrefine.api.Finding;
+import ch.rasc.jrefine.tools.expressions.UseListSortTool;
+import ch.rasc.jrefine.tools.expressions.RemoveRedundantStreamOptionalStepTool;
+import ch.rasc.jrefine.tools.declarations.RemoveUnnecessaryModifiersTool;
+import com.github.javaparser.ast.expr.IntegerLiteralExpr;
 import com.github.javaparser.Position;
 import ch.rasc.jrefine.tools.declarations.RemoveUnusedImportsTool;
 import ch.rasc.jrefine.tools.expressions.UseIsEmptyTool;
@@ -109,6 +114,146 @@ class JRefineEngineTest {
 		assertTrue(report.errors().isEmpty(), report.errors().toString());
 		assertEquals(2, report.findings().size());
 		assertTrue(Files.readString(source).contains("() -> () -> \"done\""));
+	}
+
+	@Test
+	void revisitsEarlierToolsWhenLaterRewritesExposeNewFixes() throws IOException {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		Files.writeString(source, """
+				import java.util.Collections;
+				import java.util.List;
+				class Sample {
+				    void sort(List<String> values) { Collections.sort(values); }
+				}
+				""");
+		List<InspectionTool> tools = List.of(new RemoveUnusedImportsTool(), new UseListSortTool());
+		ModernizationReport report = new JRefineEngine().run(source, tools, true);
+		assertTrue(report.errors().isEmpty(), report.errors().toString());
+		assertEquals(2, report.findings().size());
+		assertTrue(report.findings().stream().allMatch(ReportedFinding::fixed));
+		assertFalse(Files.readString(source).contains("java.util.Collections"));
+		String transformed = Files.readString(source);
+		ModernizationReport repeat = new JRefineEngine().run(source, tools, true);
+		assertTrue(repeat.errors().isEmpty());
+		assertTrue(repeat.findings().isEmpty());
+		assertEquals(0, repeat.changedFiles());
+		assertEquals(transformed, Files.readString(source));
+	}
+
+	@Test
+	void removesNestedParenthesesWithoutOverlappingEdits() throws IOException {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		Files.writeString(source, """
+				class Sample {
+				    boolean allowed(boolean owner, boolean admin, boolean enabled) {
+				        return (owner || (admin && enabled));
+				    }
+				}
+				""");
+		ModernizationReport report = new JRefineEngine().run(source, List.of(new RemoveUnnecessaryParenthesesTool()),
+				true);
+		assertTrue(report.errors().isEmpty(), report.errors().toString());
+		assertTrue(Files.readString(source).contains("return owner || admin && enabled;"));
+		assertEquals(2, report.findings().size());
+	}
+
+	@Test
+	void preservesAccessOfProtectedOverridesInFinalClasses() throws IOException {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		String original = """
+				class Base { protected String value() { return "base"; } }
+				final class Sample extends Base {
+				    @Override protected String value() { return "child"; }
+				}
+				final class WithoutAnnotation extends Base {
+				    protected String value() { return "child"; }
+				}
+				final class Copies implements Cloneable {
+				    @Override protected Object clone() throws CloneNotSupportedException { return super.clone(); }
+				}
+				""";
+		Files.writeString(source, original);
+		ModernizationReport report = new JRefineEngine().run(source, List.of(new RemoveUnnecessaryModifiersTool()),
+				true);
+		assertTrue(report.errors().isEmpty(), report.errors().toString());
+		assertEquals(original, Files.readString(source));
+		assertEquals(0, javax.tools.ToolProvider.getSystemJavaCompiler()
+			.run(null, null, null, "-d", temporaryDirectory.toString(), source.toString()));
+	}
+
+	@Test
+	void preservesGenericWideningAndStreamTraversal() throws Exception {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		String original = """
+				import java.util.List;
+				import java.util.Optional;
+				import java.util.stream.Stream;
+				public class Sample {
+				    Stream<Object> widen(Stream<String> values) { return values.map(value -> value); }
+				    Optional<Object> widenOptional(Optional<String> value) { return value.map(item -> item); }
+				    List<Object> explicit(Stream<String> values) { return values.<Object>map(value -> value).toList(); }
+				    List<Object> typed(Stream<String> values) { return values.map((Object value) -> value).toList(); }
+				    static int visits;
+				    public static int visitCount() {
+				        Stream.of(1, 2).peek(value -> visits++).filter(value -> true).count();
+				        return visits;
+				    }
+				}
+				""";
+		Files.writeString(source, original);
+		ModernizationReport report = new JRefineEngine().run(source,
+				List.of(new RemoveRedundantStreamOptionalStepTool()), true);
+		assertTrue(report.errors().isEmpty(), report.errors().toString());
+		assertEquals(original, Files.readString(source));
+		assertEquals(0, javax.tools.ToolProvider.getSystemJavaCompiler()
+			.run(null, null, null, "-d", temporaryDirectory.toString(), source.toString()));
+		try (var loader = new java.net.URLClassLoader(new java.net.URL[] { temporaryDirectory.toUri().toURL() })) {
+			assertEquals(2, loader.loadClass("Sample").getMethod("visitCount").invoke(null));
+		}
+	}
+
+	@Test
+	void rollsBackConflictingToolsAcrossPasses() throws IOException {
+		Path source = temporaryDirectory.resolve("Sample.java");
+		String original = "class Sample { int value = 0; }";
+		Files.writeString(source, original);
+		ModernizationReport report = new JRefineEngine().run(source,
+				List.of(replaceInteger("0", "1"), replaceInteger("1", "0")), true);
+		assertEquals(1, report.errors().size());
+		assertTrue(report.errors().getFirst().message().contains("do not converge"));
+		assertEquals(0, report.changedFiles());
+		assertTrue(report.findings().stream().noneMatch(ReportedFinding::fixed));
+		assertEquals(original, Files.readString(source));
+	}
+
+	private static InspectionTool replaceInteger(String from, String to) {
+		return new InspectionTool() {
+			@Override
+			public String id() {
+				return "replace-" + from;
+			}
+
+			@Override
+			public String description() {
+				return "Test conflicting transformations";
+			}
+
+			@Override
+			public ToolResult inspect(InspectionContext context, boolean applyFixes) {
+				var literal = context.compilationUnit()
+					.findAll(IntegerLiteralExpr.class)
+					.stream()
+					.filter(value -> value.getValue().equals(from))
+					.findFirst();
+				if (literal.isEmpty()) {
+					return new ToolResult(List.of(), false);
+				}
+				if (applyFixes) {
+					context.editor().replace(literal.orElseThrow().getRange().orElseThrow(), to);
+				}
+				return ToolResult.of(List.of(Finding.at(literal.orElseThrow(), "Replace integer")), applyFixes);
+			}
+		};
 	}
 
 	@Test

@@ -10,6 +10,7 @@ import com.github.javaparser.ast.expr.EnclosedExpr;
 import com.github.javaparser.ast.expr.NullLiteralExpr;
 import com.github.javaparser.ast.stmt.ReturnStmt;
 import ch.rasc.jrefine.analysis.AstSupport;
+import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -56,19 +57,20 @@ public final class RemoveRedundantTypeCastTool implements InspectionTool {
 		if (cast.getType().isPrimitiveType() || AstSupport.hasComment(context, cast)) {
 			return false;
 		}
-		String expected = expectedType(context, cast).map(ExpressionToolSupport::simpleName).orElse(null);
-		String target = ExpressionToolSupport.simpleName(cast.getType().asString());
+		String expected = expectedType(context, cast).orElse(null);
+		String target = cast.getType().asString();
 		if (expected == null || !expected.equals(target)) {
 			return false;
 		}
 		if (cast.getExpression() instanceof NullLiteralExpr) {
 			return true;
 		}
-		String source = ExpressionToolSupport.visibleSimpleType(context, cast.getExpression(), cast).orElse(null);
+		String source = TypeLookup.visibleDeclaredType(context.compilationUnit(), cast.getExpression(), cast)
+			.orElse(null);
 		if (source == null || PRIMITIVES.contains(source)) {
 			return false;
 		}
-		return source.equals(target) || "Object".equals(target) && ExpressionToolSupport
+		return source.equals(target) || Set.of("Object", "java.lang.Object").contains(target) && ExpressionToolSupport
 			.knownType(context.compilationUnit(), cast.getType().asString(), "java.lang", Set.of("Object"));
 	}
 
@@ -83,8 +85,7 @@ public final class RemoveRedundantTypeCastTool implements InspectionTool {
 			return Optional.of(variable.getType().asString());
 		}
 		if (parent instanceof AssignExpr assignment && assignment.getValue() == current) {
-			return ch.rasc.jrefine.analysis.TypeLookup.visibleType(context.compilationUnit(), assignment.getTarget(),
-					assignment);
+			return TypeLookup.visibleDeclaredType(context.compilationUnit(), assignment.getTarget(), assignment);
 		}
 		if (parent instanceof ReturnStmt statement && statement.getExpression().orElse(null) == current) {
 			return AstSupport.ancestor(statement, MethodDeclaration.class).map(method -> method.getType().asString());

@@ -79,10 +79,19 @@ public final class UseMethodReferenceTool implements InspectionTool {
 				.map(qualifier -> new Candidate(lambda, qualifier + "::" + call.getNameAsString()));
 		}
 		if (body instanceof ObjectCreationExpr creation && creation.getAnonymousClassBody().isEmpty()
-				&& forwarded(parameters, creation.getArguments())) {
+				&& !computeIfAbsentFactory(lambda) && forwarded(parameters, creation.getArguments())) {
 			return Optional.of(new Candidate(lambda, context.editor().text(creation.getType()) + "::new"));
 		}
 		return Optional.empty();
+	}
+
+	private static boolean computeIfAbsentFactory(LambdaExpr lambda) {
+		Node parent = lambda.getParentNode().orElse(null);
+		while (parent instanceof com.github.javaparser.ast.expr.EnclosedExpr) {
+			parent = parent.getParentNode().orElse(null);
+		}
+		// Keep the key-to-constructor relationship explicit, as required by Error Prone.
+		return parent instanceof MethodCallExpr call && "computeIfAbsent".equals(call.getNameAsString());
 	}
 
 	private static boolean safeBoundScope(InspectionContext context, Expression scope, LambdaExpr lambda) {

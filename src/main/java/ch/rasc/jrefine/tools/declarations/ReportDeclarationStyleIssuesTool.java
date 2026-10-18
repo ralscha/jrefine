@@ -54,7 +54,41 @@ public final class ReportDeclarationStyleIssuesTool implements PolicyInspectionT
 		declarations(context, findings);
 		returns(context, findings);
 		sealedPermits(context, findings);
+		equalityFields(context, findings);
+		ReportFieldInitializationContractIssuesTool.declarationStyleIssues(context, findings);
+		ch.rasc.jrefine.tools.expressions.ReportEqualityContractBugsTool.declarationStyleIssues(context, findings);
 		return new ToolResult(List.copyOf(findings), false);
+	}
+
+	private static void equalityFields(InspectionContext context, List<Finding> findings) {
+		for (ClassOrInterfaceDeclaration type : context.compilationUnit().findAll(ClassOrInterfaceDeclaration.class)) {
+			Set<String> mutable = type.getFields()
+				.stream()
+				.filter(field -> !field.isFinal())
+				.flatMap(field -> field.getVariables().stream())
+				.map(VariableDeclarator::getNameAsString)
+				.collect(java.util.stream.Collectors.toSet());
+			for (MethodDeclaration method : type.getMethods()) {
+				if (!Set.of("equals", "hashCode", "compareTo").contains(method.getNameAsString())
+						|| method.getBody().isEmpty()) {
+					continue;
+				}
+				Set<String> shadowed = method.getParameters()
+					.stream()
+					.map(Parameter::getNameAsString)
+					.collect(java.util.stream.Collectors.toSet());
+				method.findAll(VariableDeclarator.class).forEach(variable -> shadowed.add(variable.getNameAsString()));
+				method.getBody()
+					.orElseThrow()
+					.findAll(NameExpr.class)
+					.stream()
+					.filter(name -> mutable.contains(name.getNameAsString()))
+					.filter(name -> !shadowed.contains(name.getNameAsString()))
+					.findFirst()
+					.ifPresent(name -> findings
+						.add(Finding.at(name, "Non-final field referenced in " + method.getNameAsString() + "()")));
+			}
+		}
 	}
 
 	private static void arrays(InspectionContext context, List<Finding> findings) {

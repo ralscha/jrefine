@@ -47,6 +47,9 @@ java -jar target/jrefine.jar --apply path/to/project
 ```
 
 The default `high-confidence` profile contains safe rewrites and probable correctness checks.
+Mutable fields used by equality methods, Comparable without custom equality, and string-format composition are advisory checks under
+`report-declaration-style-issues` and `report-expression-style-issues`. Inherited or delegated
+equality implementations are not treated as missing contracts.
 Subjective style, complexity, and performance policies are opt-in:
 
 ```shell
@@ -82,6 +85,9 @@ Supported targets are Java 8, 11, 17, 21, and 25. Java 25 is the default.
 Use `--threads N` to control file-level parallelism and `--timings` to print aggregate per-tool
 execution time. Check-only runs parse each file once; apply mode reuses the parsed source until a
 tool changes it, then reparses before the next inspection so transformations compose safely.
+Apply mode repeats the selected tools until no further edits remain, including import cleanup
+exposed by later rewrites. Conflicting transformations that cycle cause the file's edits to be
+discarded and an error to be reported.
 
 ### Project configuration and suppressions
 
@@ -314,8 +320,24 @@ dangling or package metadata, unbalanced structural HTML, and references to miss
 source-local type. External documentation references are retained without a project classpath.
 Field-initialization checks require an explicitly imported, recognized non-null annotation and
 accept visible initializer blocks, constructor delegation, and source-local initialization helpers.
+Reads of previously initialized mutable static fields are declaration-policy advice, not
+initialization defects. API checks accept numeric parsing used inside validation catches,
+literal regex separators such as `-`, and guarded Optional reads in `else` branches or after
+a successful filtered presence check. Successful JUnit/AssertJ presence assertions, `Optional.of`,
+and immediately assigned boolean presence aliases are recognized; reassignment invalidates
+the preceding-statement evidence. Switch-expression arm values are consumed results, not
+discarded calls. Portability checks distinguish JDK internals from public
+`com.sun` APIs and third-party packages such as Mojarra's `com.sun.faces`.
 Static-member qualification is limited to stable variable receivers and members declared on a
 source-local type, so receiver side effects and ambiguous overloads are retained.
+Constructor lambdas passed to `computeIfAbsent` retain their explicit key argument to avoid
+introducing Error Prone's ambiguous-constructor-reference diagnostic.
+Generated `instanceof` pattern names avoid keywords and existing names, including parameters
+and other patterns introduced in the same pass. Repeated-cast rewrites require a stable local
+reference; mutable field reads and reassigned locals retain their original evaluation behavior.
+File-string migrations are opt-in review advice: `String` charset names are not `Charset`
+objects, and `Files.readString`/`writeString` reject malformed input that the original string
+constructors or `getBytes` calls can replace. These migrations do not rewrite source automatically.
 
 Reliability-policy reporters keep thread scheduling, monitor ownership, guarded-state annotations,
 synchronization consistency, source-local wait/notify or await/signal coordination, broad exception handling,
@@ -395,10 +417,11 @@ static type; floating-point and deferred lambda uses are excluded. Functional-wr
 constant-parameter findings are diagnostic-only, with the latter in the opt-in policy profile, and require known JDK functional interfaces or a
 private non-overloaded method whose visible calls all agree.
 
-Performance rewrites require lexically proven JDK wrapper, file, and collection types. Bulk file
-attribute reads are limited to repeated calls in one statement where `IOException` is already
-handled; as with the source inspection, callers should account for the different failure behavior
-when a file does not exist. Bulk collection replacement handles only direct element-copy loops.
+Performance rewrites require lexically proven JDK wrapper and collection types. Bulk file attribute
+reads are advisory under `use-bulk-file-attributes` in the policy profile: `Files.readAttributes()`
+changes missing-file behavior, exception contracts, and the timing of reads. Repeated reads are
+grouped within the same statement and lexical scope. Bulk collection replacement handles only
+direct element-copy loops.
 
 Redundancy cleanup is similarly scoped to recognizable JDK calls and locally provable target types.
 Varargs-array removal is limited to `Arrays.asList`, reference-cast removal to assignment and return
@@ -436,14 +459,18 @@ local integral values whose finite domain proves a single included or excluded v
 lambda cleanup accepts only trivial `Optional` suppliers whose eager value evaluation is inert.
 
 Numeric-issue coverage uses lexical primitive types and constant-expression evaluation. Safe fixes
-are limited to recognized JDK wrappers and `BigDecimal`, equality-style NaN checks, sign-safe oddness
-checks, proven Math identities, and side-effect-free arithmetic identities. Rounding choices,
+are limited to recognized JDK wrappers, equality-style NaN checks, sign-safe oddness
+checks, proven Math identities, and side-effect-free arithmetic identities. BigDecimal equality,
+double construction, and rounding are advisory checks in the opt-in policy profile: rewriting them
+can change values, scale, and null behavior. Rounding choices,
 floating-point tolerances, conversion intent, literal style, and expression decomposition remain
 report-only because those decisions require project-specific numerical policy.
 
-Performance coverage applies automatic changes only for locally proven JDK forms such as array
-constructor references, `Files` stream factories, wrapper factories/parsers, character search
-overloads, separated builder appends, bounded random integers, enum identity, and class literals.
+Performance coverage applies automatic changes only for locally proven JDK forms such as collection
+array constructor references on Java 11+, wrapper parsers, character search overloads, and simple
+`StringBuilder` appends. File-stream factories, wrapper allocation, random-number generation, nullable
+identity comparisons, and constructor calls are preserved because rewriting them can change exception
+contracts, identity, side effects, or deterministic results.
 Capacity sizing, collection implementation changes, static conversion, lifecycle handling, loop
 restructuring, regex caching, boxing policy, and embedded-device thresholds remain report-only
 because their best correction depends on workload, API contracts, or deployment constraints.

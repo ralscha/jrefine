@@ -82,13 +82,12 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 			boolean hashCode = type.getMethodsByName("hashCode")
 				.stream()
 				.anyMatch(method -> method.getParameters().isEmpty());
-			if (type.getImplementedTypes()
+			boolean onlyDelegates = type.getMethods()
 				.stream()
-				.anyMatch(implemented -> "Comparable".equals(implemented.getNameAsString())) && !equalsObject
-					&& !generatedEquality) {
-				findings.add(Finding.at(type, "Comparable is implemented but equals(Object) is not overridden"));
-			}
-			if (!generatedEquality && equalsObject != hashCode) {
+				.filter(method -> equalsObject(method)
+						|| "hashCode".equals(method.getNameAsString()) && method.getParameters().isEmpty())
+				.allMatch(ReportEqualityContractBugsTool::delegatesToSuper);
+			if (!generatedEquality && equalsObject != hashCode && !onlyDelegates && type.getExtendedTypes().isEmpty()) {
 				findings.add(Finding.at(type, "equals() and hashCode() should be overridden together"));
 			}
 			type.getMethodsByName("equal")
@@ -100,7 +99,8 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 				if (method.getParameters().size() == 1 && !equalsObject(method)) {
 					findings.add(Finding.at(method, "Covariant equals() does not override equals(Object)"));
 				}
-				if (equalsObject(method) && method.getBody().isPresent()
+				if (equalsObject(method) && method.getBody().isPresent() && !delegatesToSuper(method)
+						&& castsParameter(method)
 						&& method.getBody().orElseThrow().findAll(InstanceOfExpr.class).isEmpty()
 						&& method.getBody()
 							.orElseThrow()
@@ -110,9 +110,36 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 					findings.add(Finding.at(method, "equals() method does not check the class of its parameter"));
 				}
 			}
-			nonFinalFields(type, findings);
 			suspiciousCompareImplementations(type, findings);
 		}
+	}
+
+	private static boolean delegatesToSuper(MethodDeclaration method) {
+		if (method.getBody().isEmpty() || method.getBody().orElseThrow().getStatements().size() != 1
+				|| !(method.getBody().orElseThrow().getStatement(0) instanceof ReturnStmt returned)
+				|| !(returned.getExpression().orElse(null) instanceof MethodCallExpr call)
+				|| !call.getNameAsString().equals(method.getNameAsString())
+				|| call.getScope().filter(Expression::isSuperExpr).isEmpty()
+				|| call.getArguments().size() != method.getParameters().size()) {
+			return false;
+		}
+		for (int index = 0; index < call.getArguments().size(); index++) {
+			if (!(call.getArgument(index) instanceof NameExpr name)
+					|| !name.getNameAsString().equals(method.getParameter(index).getNameAsString())) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	private static boolean castsParameter(MethodDeclaration method) {
+		String parameter = method.getParameter(0).getNameAsString();
+		return method.getBody()
+			.orElseThrow()
+			.findAll(CastExpr.class)
+			.stream()
+			.anyMatch(
+					cast -> cast.getExpression() instanceof NameExpr name && name.getNameAsString().equals(parameter));
 	}
 
 	private static boolean equalsObject(MethodDeclaration method) {
@@ -122,6 +149,21 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 				&& method.getType()
 					.asPrimitiveType()
 					.getType() == com.github.javaparser.ast.type.PrimitiveType.Primitive.BOOLEAN;
+	}
+
+	/** Optional advice: Comparable does not require overriding Object.equals(). */
+	public static void declarationStyleIssues(InspectionContext context, List<Finding> findings) {
+		for (ClassOrInterfaceDeclaration type : context.compilationUnit().findAll(ClassOrInterfaceDeclaration.class)) {
+			if (!type.isInterface() && type.getExtendedTypes().isEmpty()
+					&& type.getImplementedTypes()
+						.stream()
+						.anyMatch(implemented -> TypeLookup.isKnownJavaLangType(context.compilationUnit(),
+								implemented.getNameWithScope(), Set.of("Comparable")))
+					&& type.getMethodsByName("equals").stream().noneMatch(ReportEqualityContractBugsTool::equalsObject)
+					&& !generatedEquality(context, type)) {
+				findings.add(Finding.at(type, "Comparable is implemented but equals(Object) is not overridden"));
+			}
+		}
 	}
 
 	private static boolean generatedEquality(InspectionContext context, ClassOrInterfaceDeclaration type) {
@@ -159,36 +201,6 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 					&& imported.getNameAsString().equals(owner));
 	}
 
-	private static void nonFinalFields(ClassOrInterfaceDeclaration type, List<Finding> findings) {
-		Set<String> mutable = type.getFields()
-			.stream()
-			.filter(field -> !field.isFinal())
-			.flatMap(field -> field.getVariables().stream())
-			.map(variable -> variable.getNameAsString())
-			.collect(java.util.stream.Collectors.toSet());
-		if (mutable.isEmpty()) {
-			return;
-		}
-		for (MethodDeclaration method : type.getMethods()) {
-			String kind = switch (method.getNameAsString()) {
-				case "equals" -> "equals()";
-				case "hashCode" -> "hashCode()";
-				case "compareTo" -> "compareTo()";
-				default -> null;
-			};
-			if (kind == null || method.getBody().isEmpty()) {
-				continue;
-			}
-			method.getBody()
-				.orElseThrow()
-				.findAll(NameExpr.class)
-				.stream()
-				.filter(name -> mutable.contains(name.getNameAsString()))
-				.findFirst()
-				.ifPresent(name -> findings.add(Finding.at(name, "Non-final field referenced in " + kind)));
-		}
-	}
-
 	private static void suspiciousCompareImplementations(ClassOrInterfaceDeclaration type, List<Finding> findings) {
 		for (MethodDeclaration method : type.getMethods()) {
 			if (!"compareTo".equals(method.getNameAsString()) && !"compare".equals(method.getNameAsString())
@@ -224,7 +236,9 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 
 	private static void equalityCalls(InspectionContext context, List<Finding> findings) {
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
-			if (call.getScope().isEmpty()) {
+			if (call.getScope().isEmpty()
+					|| !Set.of("equals", "compareTo", "compareToIgnoreCase", "hashCode", "toString")
+						.contains(call.getNameAsString())) {
 				continue;
 			}
 			Expression scope = call.getScope().orElseThrow();
@@ -402,16 +416,45 @@ public final class ReportEqualityContractBugsTool implements InspectionTool {
 
 	private static void compareUsage(InspectionContext context, List<Finding> findings) {
 		for (BinaryExpr binary : context.compilationUnit().findAll(BinaryExpr.class)) {
+			if (!Set
+				.of(Operator.EQUALS, Operator.NOT_EQUALS, Operator.LESS, Operator.LESS_EQUALS, Operator.GREATER,
+						Operator.GREATER_EQUALS)
+				.contains(binary.getOperator())) {
+				continue;
+			}
 			MethodCallExpr call = binary.getLeft() instanceof MethodCallExpr left ? left
 					: binary.getRight() instanceof MethodCallExpr right ? right : null;
 			Expression other = call == binary.getLeft() ? binary.getRight() : binary.getLeft();
-			if (call == null || !Set.of("compare", "compareTo").contains(call.getNameAsString())) {
+			if (call == null || call.getScope().isEmpty()
+					|| !Set.of("compare", "compareTo", "compareToIgnoreCase").contains(call.getNameAsString())) {
+				continue;
+			}
+			String receiver = typeOf(context, call.getScope().orElseThrow(), call).orElse("");
+			if (!TypeLookup.isKnownJavaLangType(context.compilationUnit(), receiver,
+					Set.of("String", "StringBuilder", "StringBuffer", "Comparable"))
+					&& !TypeLookup.isKnownJavaUtilType(context.compilationUnit(), receiver, Set.of("Comparator"))) {
 				continue;
 			}
 			integer(other).filter(value -> value != 0)
+				.filter(value -> !equivalentToZeroComparison(binary, call, value))
 				.ifPresent(value -> findings
 					.add(Finding.at(binary, "Comparison method result should normally be compared with zero")));
 		}
+	}
+
+	private static boolean equivalentToZeroComparison(BinaryExpr binary, MethodCallExpr call, int value) {
+		Operator operator = binary.getOperator();
+		if (call == binary.getRight()) {
+			operator = switch (operator) {
+				case LESS -> Operator.GREATER;
+				case LESS_EQUALS -> Operator.GREATER_EQUALS;
+				case GREATER -> Operator.LESS;
+				case GREATER_EQUALS -> Operator.LESS_EQUALS;
+				default -> operator;
+			};
+		}
+		return value == 1 && (operator == Operator.LESS || operator == Operator.GREATER_EQUALS)
+				|| value == -1 && (operator == Operator.GREATER || operator == Operator.LESS_EQUALS);
 	}
 
 	private static Optional<String> typeOf(InspectionContext context, Expression expression, Node use) {

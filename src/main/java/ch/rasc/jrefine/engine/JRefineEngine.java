@@ -15,6 +15,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -29,6 +30,8 @@ import java.util.concurrent.atomic.LongAdder;
 public final class JRefineEngine {
 
 	private static final int MAX_FIX_ROUNDS_PER_TOOL = 100;
+
+	private static final int MAX_TOOL_PASSES = 100;
 
 	private final SourceScanner sourceScanner;
 
@@ -170,64 +173,82 @@ public final class JRefineEngine {
 		}
 		Set<String> suppressed = ToolSuppression.suppressedTools(compilationUnit);
 
-		for (InspectionTool tool : tools) {
-			try {
-				int fixRound = 0;
-				boolean rerun;
-				do {
-					if (compilationUnit == null) {
-						compilationUnit = parseSource(parser, currentSource, sourceFile, errors);
+		Set<String> passSources = new HashSet<>();
+		int passes = 0;
+		boolean passChanged;
+		do {
+			passSources.add(currentSource);
+			passChanged = false;
+			// Only the final pass describes issues still present in the written source.
+			fileFindings.removeIf(finding -> !finding.fixed());
+			for (InspectionTool tool : tools) {
+				try {
+					int fixRound = 0;
+					boolean rerun;
+					do {
 						if (compilationUnit == null) {
-							inspectionFailed = true;
-							break;
+							compilationUnit = parseSource(parser, currentSource, sourceFile, errors);
+							if (compilationUnit == null) {
+								inspectionFailed = true;
+								break;
+							}
+							suppressed = ToolSuppression.suppressedTools(compilationUnit);
 						}
-						suppressed = ToolSuppression.suppressedTools(compilationUnit);
+						if (ToolSuppression.isSuppressed(suppressed, tool.id())) {
+							rerun = false;
+							continue;
+						}
+						SourceEditor editor = new SourceEditor(currentSource);
+						InspectionContext context = new InspectionContext(sourceFile, compilationUnit, editor,
+								options.targetJava());
+						ToolResult result = inspectTimed(tool, context, true, timings);
+						if (!result.changed() && editor.hasEdits()) {
+							throw new IllegalStateException("A tool produced source edits but reported no change");
+						}
+						result.findings()
+							.forEach(finding -> fileFindings.add(new ReportedFinding(sourceFile, tool.id(), finding,
+									options.severity(tool), result.changed())));
+						rerun = result.changed();
+						if (rerun) {
+							if (!editor.hasEdits()) {
+								throw new IllegalStateException("A tool reported a change but produced no source edit");
+							}
+							String rendered = editor.render();
+							if (rendered.equals(currentSource)) {
+								throw new IllegalStateException(
+										"A tool reported a change but left the source unchanged");
+							}
+							currentSource = rendered;
+							compilationUnit = null;
+							fileChanged = true;
+							passChanged = true;
+							fixRound++;
+							if (fixRound >= MAX_FIX_ROUNDS_PER_TOOL) {
+								throw new IllegalStateException("Exceeded " + MAX_FIX_ROUNDS_PER_TOOL
+										+ " fix rounds; the tool may not converge");
+							}
+						}
 					}
-					if (ToolSuppression.isSuppressed(suppressed, tool.id())) {
-						rerun = false;
-						continue;
-					}
-					SourceEditor editor = new SourceEditor(currentSource);
-					InspectionContext context = new InspectionContext(sourceFile, compilationUnit, editor,
-							options.targetJava());
-					ToolResult result = inspectTimed(tool, context, true, timings);
-					if (!result.changed() && editor.hasEdits()) {
-						throw new IllegalStateException("A tool produced source edits but reported no change");
-					}
-					result.findings()
-						.forEach(finding -> fileFindings.add(new ReportedFinding(sourceFile, tool.id(), finding,
-								options.severity(tool), result.changed())));
-					rerun = result.changed();
-					if (rerun) {
-						if (!editor.hasEdits()) {
-							throw new IllegalStateException("A tool reported a change but produced no source edit");
-						}
-						String rendered = editor.render();
-						if (rendered.equals(currentSource)) {
-							throw new IllegalStateException("A tool reported a change but left the source unchanged");
-						}
-						currentSource = rendered;
-						compilationUnit = null;
-						fileChanged = true;
-						fixRound++;
-						if (fixRound >= MAX_FIX_ROUNDS_PER_TOOL) {
-							throw new IllegalStateException(
-									"Exceeded " + MAX_FIX_ROUNDS_PER_TOOL + " fix rounds; the tool may not converge");
-						}
+					while (rerun);
+					if (inspectionFailed) {
+						break;
 					}
 				}
-				while (rerun);
-				if (inspectionFailed) {
+				catch (RuntimeException exception) {
+					errors.add(new ProcessingError(sourceFile,
+							"Tool '" + tool.id() + "' failed: " + usefulMessage(exception)));
+					inspectionFailed = true;
 					break;
 				}
 			}
-			catch (RuntimeException exception) {
-				errors.add(new ProcessingError(sourceFile,
-						"Tool '" + tool.id() + "' failed: " + usefulMessage(exception)));
+			passes++;
+			if (!inspectionFailed && passChanged
+					&& (passSources.contains(currentSource) || passes >= MAX_TOOL_PASSES)) {
+				errors.add(new ProcessingError(sourceFile, "Selected tools do not converge across apply passes"));
 				inspectionFailed = true;
-				break;
 			}
 		}
+		while (passChanged && !inspectionFailed);
 
 		boolean fixesWritten = !fileChanged;
 		boolean changed = false;

@@ -161,6 +161,11 @@ public final class ReportExceptionFlowBugsTool implements InspectionTool {
 	}
 
 	private static boolean immediatelyRethrows(CatchClause clause, String parameter) {
+		// An earlier rethrow can deliberately bypass a later, broader handler.
+		if (!(clause.getParentNode().orElse(null) instanceof TryStmt statement)
+				|| statement.getCatchClauses().getLast().orElse(null) != clause) {
+			return false;
+		}
 		if (clause.getBody().getStatements().size() != 1
 				|| !(clause.getBody().getStatement(0) instanceof ThrowStmt thrown)
 				|| !(thrown.getExpression() instanceof NameExpr name)) {

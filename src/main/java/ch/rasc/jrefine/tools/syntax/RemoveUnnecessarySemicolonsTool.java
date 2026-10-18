@@ -103,14 +103,17 @@ public final class RemoveUnnecessarySemicolonsTool implements InspectionTool {
 				return false;
 			}
 		}
+		if (type instanceof EnumDeclaration enumeration && enumeration.getEntries()
+			.stream()
+			.anyMatch(entry -> entry.getRange().filter(range -> range.contains(position)).isPresent())) {
+			return false;
+		}
 		return !(type instanceof EnumDeclaration enumeration) || !enumSeparator(enumeration, position);
 	}
 
 	private static boolean enumSeparator(EnumDeclaration enumeration, Position position) {
-		if (enumeration.getEntries().isEmpty()) {
-			return false;
-		}
-		Position afterEntries = enumeration.getEntries().getLast().orElseThrow().getEnd().orElseThrow();
+		Position afterEntries = enumeration.getEntries().isEmpty() ? enumeration.getName().getEnd().orElseThrow()
+				: enumeration.getEntries().getLast().orElseThrow().getEnd().orElseThrow();
 		Position beforeMembers = enumeration.getMembers().isEmpty() ? enumeration.getEnd().orElseThrow()
 				: enumeration.getMembers().get(0).getBegin().orElseThrow();
 		return afterEntries.isBefore(position) && position.isBefore(beforeMembers);

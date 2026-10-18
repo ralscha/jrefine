@@ -59,7 +59,7 @@ class AdditionalVerboseControlFlowToolsTest {
 	}
 
 	@Test
-	void removesDefaultFromExhaustiveLocalEnumSwitches() {
+	void removesOnlyEmptyDefaultsFromExhaustiveLocalEnumSwitchStatements() {
 		InspectionContext context = TestSources.parse("""
 				enum State { READY, DONE }
 				class Sample {
@@ -74,7 +74,7 @@ class AdditionalVerboseControlFlowToolsTest {
 				        switch (state) {
 				            case READY -> System.out.println("ready");
 				            case DONE -> System.out.println("done");
-				            default -> System.out.println("unknown");
+				            default -> {}
 				        }
 				    }
 				}
@@ -82,8 +82,9 @@ class AdditionalVerboseControlFlowToolsTest {
 		ToolResult result = new RemoveUnnecessaryEnumSwitchDefaultTool().inspect(context, true);
 		String output = TestSources.print(context);
 
-		assertEquals(2, result.findings().size());
-		assertFalse(output.contains("default ->"), output);
+		assertEquals(1, result.findings().size());
+		assertTrue(output.contains("default -> 0;"), output);
+		assertFalse(output.contains("default -> {}"), output);
 		TestSources.parse(output);
 	}
 

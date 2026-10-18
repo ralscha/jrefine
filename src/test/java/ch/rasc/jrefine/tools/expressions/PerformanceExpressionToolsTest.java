@@ -52,7 +52,7 @@ class PerformanceExpressionToolsTest {
 	}
 
 	@Test
-	void readsRepeatedFileAttributesInBulkWhenIOExceptionIsHandled() {
+	void reportsBulkAttributeReadsWithoutChangingFailureBehavior() {
 		InspectionContext context = TestSources.parse("""
 				import java.io.File;
 				import java.io.IOException;
@@ -63,20 +63,29 @@ class PerformanceExpressionToolsTest {
 				    }
 				}
 				""");
+		String original = TestSources.print(context);
 		ToolResult result = new UseBulkFileAttributesTool().inspect(context, true);
 		String output = TestSources.print(context);
 
 		assertEquals(1, result.findings().size());
-		assertTrue(output.contains("import java.nio.file.Files;"), output);
-		assertTrue(output.contains("import java.nio.file.attribute.BasicFileAttributes;"), output);
-		assertTrue(output.contains("BasicFileAttributes fileAttributes = "
-				+ "Files.readAttributes(file.toPath(), BasicFileAttributes.class);"), output);
-		assertTrue(output.contains("fileAttributes.isRegularFile()"), output);
-		assertTrue(output.contains("fileAttributes.lastModifiedTime().toMillis()"), output);
-		assertTrue(output.contains("fileAttributes.size()"), output);
-		assertTrue(output.contains("fileAttributes.isDirectory()"), output);
-		assertFalse(output.contains("file.isFile()"), output);
-		TestSources.parse(output);
+		assertFalse(result.changed());
+		assertTrue(result.findings().getFirst().message().contains("missing-file"));
+		assertEquals(original, output);
+	}
+
+	@Test
+	void doesNotGroupStructurallyIdenticalStatementsInDifferentScopes() {
+		InspectionContext context = TestSources.parse("""
+				import java.io.File;
+				import java.io.IOException;
+				class Sample {
+				    boolean first(File file) throws IOException { return file.isDirectory(); }
+				    boolean second(File file) throws IOException { return file.isDirectory(); }
+				}
+				""");
+		ToolResult result = new UseBulkFileAttributesTool().inspect(context, true);
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+		assertFalse(result.changed());
 	}
 
 	@Test

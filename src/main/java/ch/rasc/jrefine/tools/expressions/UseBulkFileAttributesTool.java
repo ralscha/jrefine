@@ -3,9 +3,6 @@ package ch.rasc.jrefine.tools.expressions;
 import com.github.javaparser.ast.Node;
 import java.util.Optional;
 import com.github.javaparser.ast.body.CallableDeclaration;
-import com.github.javaparser.ast.body.Parameter;
-import com.github.javaparser.ast.body.TypeDeclaration;
-import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.Expression;
 import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
@@ -16,25 +13,22 @@ import com.github.javaparser.ast.stmt.SwitchEntry;
 import com.github.javaparser.ast.stmt.TryStmt;
 import com.github.javaparser.ast.type.Type;
 import ch.rasc.jrefine.analysis.AstSupport;
-import ch.rasc.jrefine.analysis.ImportSupport;
-import ch.rasc.jrefine.analysis.LineEndingSupport;
 import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
-import ch.rasc.jrefine.api.InspectionTool;
+import ch.rasc.jrefine.api.PolicyInspectionTool;
 import ch.rasc.jrefine.api.ToolResult;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
 /**
- * Replaces repeated java.io.File attribute calls with one Files.readAttributes() call.
+ * Reports repeated File reads whose replacement requires reviewing filesystem semantics.
  */
-public final class UseBulkFileAttributesTool implements InspectionTool {
+public final class UseBulkFileAttributesTool implements PolicyInspectionTool {
 
 	private static final Map<String, String> ATTRIBUTE_METHODS = Map.of("isDirectory", "isDirectory()", "isFile",
 			"isRegularFile()", "lastModified", "lastModifiedTime().toMillis()", "length", "size()");
@@ -46,54 +40,16 @@ public final class UseBulkFileAttributesTool implements InspectionTool {
 
 	@Override
 	public String description() {
-		return "Use Files.readAttributes() for repeated File attribute reads";
+		return "Review repeated File attribute reads for a possible bulk snapshot";
 	}
 
 	@Override
 	public ToolResult inspect(InspectionContext context, boolean applyFixes) {
-		List<Candidate> candidates = candidates(context);
-		ArrayList<Finding> findings = new ArrayList<>();
-		if (candidates.isEmpty()) {
-			return ToolResult.of(findings, applyFixes);
-		}
-
-		String filesType = introducedType(context, "java.nio.file.Files", applyFixes);
-		String attributesType = introducedType(context, "java.nio.file.attribute.BasicFileAttributes", applyFixes);
-		LinkedHashSet<String> usedNames = new LinkedHashSet<>();
-		context.compilationUnit()
-			.findAll(VariableDeclarator.class)
-			.forEach(variable -> usedNames.add(variable.getNameAsString()));
-		context.compilationUnit()
-			.findAll(Parameter.class)
-			.forEach(parameter -> usedNames.add(parameter.getNameAsString()));
-		LinkedHashMap<Statement, List<String>> declarations = new LinkedHashMap<>();
-
-		for (Candidate candidate : candidates) {
-			findings.add(Finding.at(candidate.calls().get(0).call(), "Use one Files.readAttributes() call"));
-			if (!applyFixes) {
-				continue;
-			}
-			String attributesName = availableName(usedNames, "fileAttributes");
-			usedNames.add(attributesName);
-			String declaration = attributesType + " " + attributesName + " = " + filesType + ".readAttributes("
-					+ context.editor().text(candidate.file()) + ".toPath(), " + attributesType + ".class);";
-			declarations.computeIfAbsent(candidate.statement(), ignored -> new ArrayList<>()).add(declaration);
-			for (AttributeCall call : candidate.calls()) {
-				context.editor()
-					.replace(call.call().getRange().orElseThrow(),
-							attributesName + "." + ATTRIBUTE_METHODS.get(call.method()));
-			}
-		}
-		if (applyFixes) {
-			String lineEnding = LineEndingSupport.detect(context.editor().source());
-			declarations.forEach((statement, values) -> {
-				String indent = " ".repeat(Math.max(0, statement.getBegin().orElseThrow().column - 1));
-				context.editor()
-					.insert(statement.getBegin().orElseThrow(),
-							String.join(lineEnding + indent, values) + lineEnding + indent);
-			});
-		}
-		return ToolResult.of(findings, applyFixes);
+		List<Finding> findings = candidates(context).stream()
+			.map(candidate -> Finding.at(candidate.calls().get(0).call(),
+					"Repeated File attribute reads could use a snapshot; review missing-file and IOException behavior"))
+			.toList();
+		return new ToolResult(findings, false);
 	}
 
 	private static List<Candidate> candidates(InspectionContext context) {
@@ -167,27 +123,16 @@ public final class UseBulkFileAttributesTool implements InspectionTool {
 						Set.of("Exception", "Throwable"));
 	}
 
-	private static String introducedType(InspectionContext context, String qualifiedName, boolean applyFixes) {
-		String simple = qualifiedName.substring(qualifiedName.lastIndexOf('.') + 1);
-		boolean declared = context.compilationUnit()
-			.findAll(TypeDeclaration.class)
-			.stream()
-			.anyMatch(type -> type.getNameAsString().equals(simple));
-		return declared ? qualifiedName : ImportSupport.useType(context, qualifiedName, applyFixes);
-	}
-
-	private static String availableName(Set<String> usedNames, String preferred) {
-		if (!usedNames.contains(preferred)) {
-			return preferred;
-		}
-		int index = 2;
-		while (usedNames.contains(preferred + index)) {
-			index++;
-		}
-		return preferred + index;
-	}
-
 	private record Group(Statement statement, String fileName) {
+		@Override
+		public boolean equals(Object other) {
+			return other instanceof Group group && statement == group.statement && fileName.equals(group.fileName);
+		}
+
+		@Override
+		public int hashCode() {
+			return 31 * System.identityHashCode(statement) + fileName.hashCode();
+		}
 	}
 
 	private record AttributeCall(MethodCallExpr call, String method) {

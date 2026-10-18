@@ -17,6 +17,7 @@ import com.github.javaparser.ast.stmt.Statement;
 import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.analysis.LineEndingSupport;
 import ch.rasc.jrefine.analysis.SemanticEvidence;
+import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -99,6 +100,16 @@ public final class NarrowVariableScopeTool implements InspectionTool {
 			if (firstUseIndex <= declarationIndex + 1) {
 				continue;
 			}
+			// Keep a group of declarations together. Rotating its first declaration to
+			// the end would otherwise repeat forever when they share a first use.
+			while (firstUseIndex > declarationIndex + 1
+					&& statements.get(firstUseIndex - 1) instanceof ExpressionStmt previous
+					&& previous.getExpression() instanceof VariableDeclarationExpr) {
+				firstUseIndex--;
+			}
+			if (firstUseIndex <= declarationIndex + 1) {
+				continue;
+			}
 			Statement firstUse = statements.get(firstUseIndex);
 			if (declarationStatement.getBegin().orElseThrow().line == firstUse.getBegin().orElseThrow().line) {
 				continue;
@@ -113,7 +124,11 @@ public final class NarrowVariableScopeTool implements InspectionTool {
 			return true;
 		}
 		return initializer instanceof NameExpr name
-				&& SemanticEvidence.isEffectivelyFinalLocalOrParameter(context, name.getNameAsString(), use);
+				&& SemanticEvidence.isEffectivelyFinalLocalOrParameter(context, name.getNameAsString(), use)
+				&& use instanceof VariableDeclarator variable
+				&& TypeLookup.visibleDeclaredType(context.compilationUnit(), initializer, use)
+					.filter(type -> type.equals(variable.getType().asString()))
+					.isPresent();
 	}
 
 	private static boolean shadowedInside(BlockStmt block, VariableDeclarator variable, String name) {

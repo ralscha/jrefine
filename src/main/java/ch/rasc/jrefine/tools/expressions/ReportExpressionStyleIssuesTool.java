@@ -45,6 +45,7 @@ public final class ReportExpressionStyleIssuesTool implements PolicyInspectionTo
 		objectsEquals(context, findings);
 		calls(context, findings);
 		binaryExpressions(context, findings);
+		ReportFormatStringBugsTool.styleIssues(context, findings);
 		return new ToolResult(List.copyOf(findings), false);
 	}
 

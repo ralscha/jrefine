@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.HashSet;
 
 /**
  * Qualifies source-local static members with their declaring type instead of an instance.
@@ -36,14 +38,29 @@ public final class QualifyStaticMemberAccessTool implements InspectionTool {
 	@Override
 	public ToolResult inspect(InspectionContext context, boolean applyFixes) {
 		Map<String, TypeDeclaration<?>> types = uniqueTypes(context);
+		Set<String> staticFields = new HashSet<>();
+		Set<String> staticMethods = new HashSet<>();
+		for (TypeDeclaration<?> type : types.values()) {
+			for (var member : type.getMembers()) {
+				if (member instanceof FieldDeclaration field && field.isStatic()) {
+					field.getVariables().forEach(variable -> staticFields.add(variable.getNameAsString()));
+				}
+				else if (member instanceof MethodDeclaration method && method.isStatic()) {
+					staticMethods.add(method.getNameAsString());
+				}
+			}
+		}
 		ArrayList<Candidate> candidates = new ArrayList<>();
 		for (FieldAccessExpr access : context.compilationUnit().findAll(FieldAccessExpr.class)) {
+			if (!staticFields.contains(access.getNameAsString())) {
+				continue;
+			}
 			sourceType(context, access.getScope(), access, types).filter(type -> canQualify(context, type, access))
 				.filter(type -> staticField(type, access.getNameAsString()))
 				.ifPresent(type -> candidates.add(new Candidate(access, access.getScope(), type.getNameAsString())));
 		}
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
-			if (call.getScope().isEmpty()) {
+			if (call.getScope().isEmpty() || !staticMethods.contains(call.getNameAsString())) {
 				continue;
 			}
 			Expression scope = call.getScope().orElseThrow();

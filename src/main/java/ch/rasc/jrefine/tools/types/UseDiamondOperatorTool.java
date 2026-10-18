@@ -7,6 +7,7 @@ import java.util.Optional;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.VariableDeclarator;
 import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.LambdaExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.MethodReferenceExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
@@ -62,6 +63,14 @@ public final class UseDiamondOperatorTool implements InspectionTool {
 			return false;
 		}
 		if (isInsideVarInitializer(creation)) {
+			return false;
+		}
+		// Explicit constructor arguments can supply the lambda's parameter types when
+		// the surrounding invocation provides only a raw or wildcard target.
+		if (creation.getArguments()
+			.stream()
+			.anyMatch(argument -> argument.findFirst(LambdaExpr.class).isPresent()
+					|| argument.findFirst(MethodReferenceExpr.class).isPresent())) {
 			return false;
 		}
 		return !isReceiverOfMemberAccess(creation);

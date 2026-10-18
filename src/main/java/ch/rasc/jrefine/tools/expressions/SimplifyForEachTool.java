@@ -88,6 +88,15 @@ public final class SimplifyForEachTool implements InspectionTool {
 		}
 		VariableDeclarator variable = declaration.getVariable(0);
 		if (!variable.getNameAsString().equals(target.getNameAsString())
+				|| conditional.getCondition()
+					.findAll(NameExpr.class)
+					.stream()
+					.anyMatch(name -> name.getNameAsString().equals(variable.getNameAsString()))
+				|| call.getScope()
+					.orElseThrow()
+					.findAll(NameExpr.class)
+					.stream()
+					.anyMatch(name -> name.getNameAsString().equals(variable.getNameAsString()))
 				|| !(variable.getInitializer().orElse(null) instanceof ObjectCreationExpr initializer)
 				|| !initializer.getArguments().isEmpty() || initializer.getAnonymousClassBody().isPresent()
 				|| !TypeLookup.isKnownJavaUtilType(context.compilationUnit(), variable.getType().asString(),

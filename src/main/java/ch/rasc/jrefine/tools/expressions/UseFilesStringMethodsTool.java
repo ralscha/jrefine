@@ -6,14 +6,14 @@ import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
-import ch.rasc.jrefine.api.InspectionTool;
+import ch.rasc.jrefine.api.PolicyInspectionTool;
 import ch.rasc.jrefine.api.ToolResult;
 
 import java.util.ArrayList;
 import java.util.Optional;
 
-/** Uses the Java 11 Files string convenience methods for explicit charset conversions. */
-public final class UseFilesStringMethodsTool implements InspectionTool {
+/** Reviews Java 11 file-string migrations whose encoding error behavior may differ. */
+public final class UseFilesStringMethodsTool implements PolicyInspectionTool {
 
 	@Override
 	public String id() {
@@ -27,7 +27,7 @@ public final class UseFilesStringMethodsTool implements InspectionTool {
 
 	@Override
 	public String description() {
-		return "Use Files.readString() and Files.writeString()";
+		return "Review Files.readString() and Files.writeString() migrations for encoding compatibility";
 	}
 
 	@Override
@@ -47,12 +47,10 @@ public final class UseFilesStringMethodsTool implements InspectionTool {
 			.forEach(candidates::add);
 		ArrayList<Finding> findings = new ArrayList<>();
 		for (Candidate candidate : candidates) {
-			findings.add(Finding.at(candidate.node(), "Use Files." + candidate.method() + "()"));
-			if (applyFixes) {
-				context.editor().replace(candidate.node().getRange().orElseThrow(), candidate.replacement());
-			}
+			findings.add(Finding.at(candidate.node(), "Review Files." + candidate.method()
+					+ "(): charset types and malformed-input behavior may differ"));
 		}
-		return ToolResult.of(findings, applyFixes);
+		return ToolResult.of(findings, false);
 	}
 
 	private static Optional<Candidate> readCandidate(InspectionContext context, ObjectCreationExpr creation) {
@@ -62,10 +60,7 @@ public final class UseFilesStringMethodsTool implements InspectionTool {
 				|| !filesCall(context, read, "readAllBytes") || read.getArguments().size() != 1) {
 			return Optional.empty();
 		}
-		String owner = context.editor().text(read.getScope().orElseThrow());
-		return Optional.of(new Candidate(creation, "readString",
-				owner + ".readString(" + context.editor().text(read.getArgument(0)) + ", "
-						+ context.editor().text(creation.getArgument(1)) + ")"));
+		return Optional.of(new Candidate(creation, "readString"));
 	}
 
 	private static Optional<Candidate> writeCandidate(InspectionContext context, MethodCallExpr call) {
@@ -74,13 +69,7 @@ public final class UseFilesStringMethodsTool implements InspectionTool {
 				|| bytes.getScope().isEmpty() || bytes.getArguments().size() != 1) {
 			return Optional.empty();
 		}
-		ArrayList<String> arguments = new ArrayList<>();
-		arguments.add(context.editor().text(call.getArgument(0)));
-		arguments.add(context.editor().text(bytes.getScope().orElseThrow()));
-		arguments.add(context.editor().text(bytes.getArgument(0)));
-		call.getArguments().stream().skip(2).map(context.editor()::text).forEach(arguments::add);
-		return Optional.of(new Candidate(call, "writeString", context.editor().text(call.getScope().orElseThrow())
-				+ ".writeString(" + String.join(", ", arguments) + ")"));
+		return Optional.of(new Candidate(call, "writeString"));
 	}
 
 	private static boolean filesCall(InspectionContext context, MethodCallExpr call, String method) {
@@ -100,7 +89,7 @@ public final class UseFilesStringMethodsTool implements InspectionTool {
 			.anyMatch(imported -> !imported.isStatic() && "java.nio.file.Files".equals(imported.getNameAsString()));
 	}
 
-	private record Candidate(Node node, String method, String replacement) {
+	private record Candidate(Node node, String method) {
 	}
 
 }

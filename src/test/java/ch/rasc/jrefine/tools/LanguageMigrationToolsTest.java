@@ -55,6 +55,32 @@ class LanguageMigrationToolsTest {
 	}
 
 	@Test
+	void preservesJavadocBoundaryAndBlockTagWhitespace() {
+		String source = """
+				/**
+				 *
+				 * Description.
+				 *
+				 */
+				class Sample {
+				    /**
+				     * Description.
+				     * @author A developer
+				     *
+				     * More author details.
+				     *
+				     */
+				    void work() {}
+				}
+				""";
+		InspectionContext context = TestSources.parse(source);
+		ToolResult result = new FixJavadocParagraphsTool().inspect(context, true);
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+		assertFalse(result.changed());
+		org.junit.jupiter.api.Assertions.assertEquals(source, TestSources.print(context));
+	}
+
+	@Test
 	void movesCastDeclarationIntoPatternVariable() {
 		String output = apply(new UsePatternVariableTool(), """
 				class Sample { int length(Object value) {

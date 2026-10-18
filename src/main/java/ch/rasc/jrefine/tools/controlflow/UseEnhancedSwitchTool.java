@@ -80,6 +80,12 @@ public final class UseEnhancedSwitchTool implements InspectionTool {
 					.anyMatch(entry -> entry.getStatements().isEmpty() && entry.isDefault())) {
 			return false;
 		}
+		for (int index = 1; index < statement.getEntries().size(); index++) {
+			if (statement.getEntry(index).isDefault() && statement.getEntry(index - 1).getStatements().isEmpty()) {
+				// A constant label cannot be combined with default in an arrow rule.
+				return false;
+			}
+		}
 		List<SwitchEntry> groups = statement.getEntries()
 			.stream()
 			.filter(entry -> !entry.getStatements().isEmpty())

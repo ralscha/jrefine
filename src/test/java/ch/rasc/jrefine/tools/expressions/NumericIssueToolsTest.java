@@ -13,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class NumericIssueToolsTest {
 
 	@Test
-	void modernizesFixableBigDecimalUsageAndReportsMissingRounding() {
+	void reportsBigDecimalChoicesWithoutChangingNumericSemantics() {
 		InspectionContext context = TestSources.parse("""
 				import java.math.BigDecimal;
 				class Sample {
@@ -26,10 +26,10 @@ class NumericIssueToolsTest {
 		ToolResult result = new ModernizeBigDecimalTool().inspect(context, true);
 		String output = TestSources.print(context);
 
-		assertTrue(result.changed());
-		assertTrue(result.findings().size() == 2, result.findings().toString());
-		assertTrue(output.contains("left.compareTo(right) == 0"), output);
-		assertTrue(output.contains("BigDecimal.valueOf(0.1)"), output);
+		assertFalse(result.changed());
+		assertTrue(result.findings().size() == 4, result.findings().toString());
+		assertTrue(output.contains("left.equals(right)"), output);
+		assertTrue(output.contains("new BigDecimal(0.1)"), output);
 		assertTrue(output.contains("left.divide(right)"), output);
 		assertTrue(output.contains("value.setScale(2)"), output);
 		TestSources.parse(output);
@@ -42,6 +42,26 @@ class NumericIssueToolsTest {
 				}
 				"""), false);
 		assertTrue(check.findings().size() == 2, check.findings().toString());
+	}
+
+	@Test
+	void preservesScaleNullAndExactBinaryDecimalContracts() {
+		java.math.BigDecimal value = new java.math.BigDecimal("1.00");
+		assertFalse(value.equals(new java.math.BigDecimal("1.0")));
+		assertFalse(value.equals(null));
+		assertFalse(new java.math.BigDecimal(0.1).equals(java.math.BigDecimal.valueOf(0.1)));
+		String source = """
+				import java.math.BigDecimal;
+				class Sample {
+				    boolean same(BigDecimal left, BigDecimal right) { return left.equals(right); }
+				    BigDecimal exact() { return new BigDecimal(0.1); }
+				}
+				""";
+		InspectionContext context = TestSources.parse(source);
+		ModernizeBigDecimalTool tool = new ModernizeBigDecimalTool();
+		assertFalse(tool.inspect(context, true).changed());
+		org.junit.jupiter.api.Assertions.assertEquals(source, TestSources.print(context));
+		org.junit.jupiter.api.Assertions.assertEquals(ch.rasc.jrefine.api.ToolConfidence.POLICY, tool.confidence());
 	}
 
 	@Test

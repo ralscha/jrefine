@@ -20,7 +20,10 @@ import ch.rasc.jrefine.api.InspectionTool;
 import ch.rasc.jrefine.api.ToolResult;
 
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.Optional;
+import java.util.Set;
 
 /**
  * Removes parentheses only when Java's precedence and evaluation order remain unchanged.
@@ -46,15 +49,50 @@ public final class RemoveUnnecessaryParenthesesTool implements InspectionTool {
 			.map(expression -> candidate(context, expression))
 			.flatMap(Optional::stream)
 			.toList();
+		Set<Node> candidateNodes = Collections.newSetFromMap(new IdentityHashMap<>());
+		candidates.forEach(candidate -> candidateNodes.add(candidate.enclosed()));
 		ArrayList<Finding> findings = new ArrayList<>();
 		for (Candidate candidate : candidates) {
+			if (hasCandidateAncestor(candidate.enclosed(), candidateNodes)) {
+				continue;
+			}
 			findings.add(Finding.at(candidate.enclosed(), "Remove unnecessary parentheses"));
 			if (applyFixes) {
-				context.editor()
-					.replace(candidate.enclosed().getRange().orElseThrow(), context.editor().text(candidate.inner()));
+				String replacement = context.editor().text(candidate.inner());
+				var tokens = candidate.enclosed().getTokenRange().orElseThrow();
+				String before = tokens.getBegin().getPreviousToken().map(token -> token.getText()).orElse("");
+				String after = tokens.getEnd().getNextToken().map(token -> token.getText()).orElse("");
+				if (needsSeparator(before, replacement)) {
+					replacement = " " + replacement;
+				}
+				if (needsSeparator(replacement, after)) {
+					replacement += " ";
+				}
+				context.editor().replace(candidate.enclosed().getRange().orElseThrow(), replacement);
 			}
 		}
 		return ToolResult.of(findings, applyFixes);
+	}
+
+	private static boolean needsSeparator(String before, String after) {
+		if (before.isEmpty() || after.isEmpty()) {
+			return false;
+		}
+		int left = before.codePointBefore(before.length());
+		int right = after.codePointAt(0);
+		return Character.isJavaIdentifierPart(left) && Character.isJavaIdentifierPart(right)
+				|| left == right && (left == '+' || left == '-');
+	}
+
+	private static boolean hasCandidateAncestor(Node node, Set<Node> candidates) {
+		Node parent = node.getParentNode().orElse(null);
+		while (parent != null) {
+			if (candidates.contains(parent)) {
+				return true;
+			}
+			parent = parent.getParentNode().orElse(null);
+		}
+		return false;
 	}
 
 	private static Optional<Candidate> candidate(InspectionContext context, EnclosedExpr enclosed) {

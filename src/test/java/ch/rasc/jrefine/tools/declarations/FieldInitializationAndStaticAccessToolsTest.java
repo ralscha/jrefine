@@ -15,7 +15,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class FieldInitializationAndStaticAccessToolsTest {
 
 	@Test
-	void reportsMissingNonNullInitializationAndMutableStaticReads() {
+	void reportsMissingNonNullInitialization() {
 		ToolResult result = inspect(new ReportFieldInitializationContractIssuesTool(), """
 				import org.jetbrains.annotations.NotNull;
 				class Sample {
@@ -29,7 +29,21 @@ class FieldInitializationAndStaticAccessToolsTest {
 				}
 				""");
 
-		assertMessages(result, "Instance non-null field", "Static non-null field", "Non-final static field is read");
+		assertMessages(result, "Instance non-null field", "Static non-null field");
+		assertFalse(messages(result).stream().anyMatch(message -> message.contains("Non-final static")));
+	}
+
+	@Test
+	void treatsAlreadyInitializedMutableStaticReadsAsDeclarationPolicy() {
+		String source = """
+				class Duration {
+				    static long SECONDS = 1000;
+				    static long MINUTES = SECONDS * 60;
+				    static long HOURS = MINUTES * 60;
+				}
+				""";
+		assertTrue(inspect(new ReportFieldInitializationContractIssuesTool(), source).findings().isEmpty());
+		assertMessages(inspect(new ReportDeclarationStyleIssuesTool(), source), "Non-final static field is read");
 	}
 
 	@Test

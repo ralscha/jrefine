@@ -5,6 +5,9 @@ import java.util.List;
 import com.github.javaparser.JavaToken;
 import com.github.javaparser.Range;
 import com.github.javaparser.ast.type.ArrayType;
+import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.nodeTypes.NodeWithVariables;
+import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -27,10 +30,14 @@ public final class NormalizeArrayDeclarationsTool implements InspectionTool {
 
 	@Override
 	public ToolResult inspect(InspectionContext context, boolean applyFixes) {
-		List<ArrayType> candidates = context.compilationUnit()
+		List<ArrayType> all = context.compilationUnit()
 			.findAll(ArrayType.class)
 			.stream()
 			.filter(type -> type.getOrigin() == ArrayType.Origin.NAME)
+			.filter(type -> !sharedDeclaration(type) && !AstSupport.hasComment(context, type))
+			.toList();
+		List<ArrayType> candidates = all.stream()
+			.filter(type -> all.stream().noneMatch(other -> other != type && other.isAncestorOf(type)))
 			.toList();
 		ArrayList<Finding> findings = new ArrayList<>();
 		for (ArrayType type : candidates) {
@@ -50,6 +57,14 @@ public final class NormalizeArrayDeclarationsTool implements InspectionTool {
 			}
 		}
 		return ToolResult.of(findings, applyFixes);
+	}
+
+	private static boolean sharedDeclaration(ArrayType type) {
+		return type.findAncestor(VariableDeclarator.class)
+			.flatMap(VariableDeclarator::getParentNode)
+			.filter(parent -> parent instanceof NodeWithVariables<?> declaration
+					&& declaration.getVariables().size() > 1)
+			.isPresent();
 	}
 
 	private static JavaToken lastSignificantToken(ArrayType type) {

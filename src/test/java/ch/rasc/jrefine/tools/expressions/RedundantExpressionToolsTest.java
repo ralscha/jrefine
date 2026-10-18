@@ -102,6 +102,30 @@ class RedundantExpressionToolsTest {
 				} }
 				""");
 		assertTrue(stream.contains("values.stream().toList()"), stream);
+		String optional = apply(new RemoveRedundantStreamOptionalStepTool(), """
+				import java.util.Optional;
+				class Sample { Optional<String> copy(Optional<String> value) {
+				    return value.filter(item -> true);
+				} }
+				""");
+		assertTrue(optional.contains("return value;"), optional);
+	}
+
+	@Test
+	void keepsCallsAfterLeavingAKnownPipeline() {
+		InspectionContext context = TestSources.parse("""
+				import java.util.Optional;
+				import java.util.function.Function;
+				class Custom {
+				    Custom map(Function<Custom, Custom> mapper) { throw new IllegalStateException(); }
+				}
+				class Sample {
+				    String use(Optional<Custom> value) { return value.orElseThrow().map(item -> item).toString(); }
+				}
+				""");
+		ToolResult result = new RemoveRedundantStreamOptionalStepTool().inspect(context, true);
+		assertFalse(result.changed());
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
 	}
 
 	@Test

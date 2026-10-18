@@ -57,8 +57,60 @@ class ProbableBugsInspectionBatchTest {
 				}
 				""");
 
-		assertMessages(result, "Comparable", "equal()", "Covariant equals", "Array comparison", "String comparison",
-				"compared with itself", "Subtraction", "Non-final field");
+		assertMessages(result, "equal()", "Covariant equals", "Array comparison", "String comparison",
+				"compared with itself", "Subtraction");
+	}
+
+	@Test
+	void acceptsInheritedDelegatedAndIdentityEquality() {
+		ToolResult result = inspect(new ReportEqualityContractBugsTool(), """
+				class Base {
+				    public boolean equals(Object other) { return this == other; }
+				    public int hashCode() { return System.identityHashCode(this); }
+				}
+				class Inherited extends Base implements Comparable<Inherited> {
+				    public int compareTo(Inherited other) { return Integer.compare(hashCode(), other.hashCode()); }
+				}
+				class Delegated extends Base {
+				    public boolean equals(Object other) { return super.equals(other); }
+				}
+				class HashDelegated {
+				    public int hashCode() { return super.hashCode(); }
+				}
+				""");
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+	}
+
+	@Test
+	void acceptsNormalizedComparisonResultsArithmeticAndEquivalentIntegerBounds() {
+		ToolResult result = inspect(new ReportEqualityContractBugsTool(), """
+				import java.math.BigDecimal;
+				import java.util.Date;
+				class Sample implements Comparable<Sample> {
+				    public int compareTo(Sample other) { return Integer.compare(hashCode(), other.hashCode()); }
+				    boolean decimals(BigDecimal first, BigDecimal second) { return first.compareTo(second) == 1; }
+				    boolean dates(Date first, Date second) { return first.compareTo(second) != -1; }
+				    int reverse(String first, String second) { return first.compareTo(second) * -1; }
+				    boolean bounds(String first, String second) { return first.compareTo(second) < 1; }
+				    boolean reversedBounds(String first, String second) { return -1 < first.compareTo(second); }
+				    boolean suspicious(String first, String second) { return first.compareTo(second) == 1; }
+				}
+				""");
+		assertEquals(1, result.findings().size(), result.findings().toString());
+		assertMessages(result, "compared with zero");
+	}
+
+	@Test
+	void stillReportsUncheckedEqualityParameterCasts() {
+		ToolResult result = inspect(new ReportEqualityContractBugsTool(), """
+				class Sample {
+				    int value;
+				    public boolean equals(Object other) { return value == ((Sample) other).value; }
+				    public int hashCode() { return value; }
+				}
+				""");
+		assertMessages(result, "does not check the class");
+		assertNoMessages(result, "Non-final field");
 	}
 
 	@Test
@@ -256,6 +308,191 @@ class ProbableBugsInspectionBatchTest {
 	}
 
 	@Test
+	void acceptsLiteralRegexCharactersAndCalendarDateOverloads() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.util.Calendar;
+				class Sample {
+				    void use(String text, Calendar calendar) {
+				        text.split("-");
+				        text.split("]");
+				        text.split("}");
+				        calendar.set(2019, 6, 1);
+				        calendar.set(2019, 6, 1, 12, 0, 0);
+				    }
+				}
+				""");
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+	}
+
+	@Test
+	void acceptsNumericParsingUsedToValidateInput() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				class Sample {
+				    boolean valid(String text) {
+				        try { Long.parseLong(text); return true; }
+				        catch (NumberFormatException e) { return false; }
+				    }
+				    void unused(String text) { Long.parseLong(text); }
+				}
+				""");
+		assertEquals(1,
+				result.findings()
+					.stream()
+					.filter(finding -> finding.message().equals("Result of method call is ignored"))
+					.count());
+	}
+
+	@Test
+	void recognizesElseAndFilteredOptionalGuardsWithoutAcceptingDisjunctions() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.util.Optional;
+				class Sample {
+				    String filtered(Optional<String> value) {
+				        if (value.filter(String::isBlank).isPresent()) { return value.get(); }
+				        return "";
+				    }
+				    String otherwise(Optional<String> value) {
+				        if (value.isEmpty()) { return ""; } else { return value.get(); }
+				    }
+				    String unsafe(Optional<String> value, boolean override) {
+				        if (value.isPresent() || override) { return value.get(); }
+				        return "";
+				    }
+				    String absent(Optional<String> value) {
+				        if (!value.isPresent()) { return value.get(); }
+				        return "";
+				    }
+				}
+				""");
+		assertEquals(2,
+				result.findings().stream().filter(finding -> finding.message().contains("presence check")).count(),
+				result.findings().toString());
+	}
+
+	@Test
+	void acceptsAssertedAndConstructedOptionalValuesButChecksReassignments() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.util.Optional;
+				import static org.junit.jupiter.api.Assertions.*;
+				import static org.assertj.core.api.Assertions.assertThat;
+				class Sample {
+				    String asserted(Optional<String> value) {
+				        assertTrue(value.isPresent());
+				        return value.get();
+				    }
+				    String fluent(Optional<String> value) {
+				        assertThat(value).isPresent();
+				        return value.get();
+				    }
+				    void assertionArguments(Optional<String> value) {
+				        assertNotNull(value.get());
+				        assertThat(value.get()).isEqualTo("expected");
+				    }
+				    String constructed(String input) {
+				        Optional<String> value = Optional.of(input);
+				        return value.get();
+				    }
+				    String reassigned(Optional<String> value) {
+				        assertTrue(value.isPresent());
+				        value = Optional.empty();
+				        return value.get();
+				    }
+				    String nullable(String input) {
+				        Optional<String> value = Optional.ofNullable(input);
+				        return value.get();
+				    }
+				    String negated(Optional<String> value, boolean invalid) {
+				        if (!(invalid || value.isEmpty())) return value.get();
+				        return "";
+				    }
+				}
+				""");
+		assertEquals(2, result.findings().stream().filter(f -> f.message().contains("presence check")).count(),
+				result.findings().toString());
+	}
+
+	@Test
+	void doesNotTreatLookalikeAssertionsAsOptionalGuards() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.util.Optional;
+				import static org.junit.jupiter.api.Assertions.*;
+				class Sample {
+				    void assertTrue(boolean ignored) {}
+				    String use(Optional<String> value) {
+				        assertTrue(value.isPresent());
+				        return value.get();
+				    }
+				}
+				""");
+		assertMessages(result, "presence check");
+	}
+
+	@Test
+	void checksOnlyDateTimeOperationsThatRequireSupportedUnitsOrFields() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.time.LocalDate;
+				import java.time.LocalTime;
+				import java.time.temporal.ChronoUnit;
+				import java.time.temporal.ChronoField;
+				class Sample {
+				    void use(LocalDate date, LocalTime time) {
+				        date.isSupported(ChronoUnit.HOURS);
+				        time.truncatedTo(ChronoUnit.DAYS);
+				        date.plus(1, ChronoUnit.HOURS);
+				        date.with(ChronoField.HOUR_OF_DAY, 1);
+				        time.get(ChronoField.DAY_OF_YEAR);
+				    }
+				}
+				""");
+		assertEquals(3, result.findings().stream().filter(f -> f.message().contains("unsupported")).count(),
+				result.findings().toString());
+	}
+
+	@Test
+	void acceptsImmediateBooleanAliasesOfOptionalPresence() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				import java.util.Optional;
+				class Sample {
+				    String use(Optional<String> value, boolean createNew) {
+				        createNew = value.isEmpty();
+				        if (!createNew) { return value.get(); }
+				        return "";
+				    }
+				    String initialized(Optional<String> value) {
+				        boolean present = value.isPresent();
+				        if (present) { return value.get(); }
+				        return "";
+				    }
+				    String reassigned(Optional<String> value) {
+				        boolean present = value.isPresent();
+				        value = Optional.empty();
+				        if (present) { return value.get(); }
+				        return "";
+				    }
+				}
+				""");
+		assertEquals(1, result.findings().stream().filter(f -> f.message().contains("presence check")).count(),
+				result.findings().toString());
+	}
+
+	@Test
+	void distinguishesSwitchExpressionValuesFromIgnoredStatementResults() {
+		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
+				class Sample {
+				    String value(int key, String text) {
+				        return switch (key) { default -> text.substring(1); };
+				    }
+				    void ignored(int key, String text) {
+				        switch (key) { default -> text.substring(1); }
+				    }
+				}
+				""");
+		assertEquals(1,
+				result.findings().stream().filter(f -> f.message().equals("Result of method call is ignored")).count(),
+				result.findings().toString());
+	}
+
+	@Test
 	void recognizesShortCircuitAndDominatingOptionalGuards() {
 		ToolResult result = inspect(new ReportApiMisuseBugsTool(), """
 				import java.util.Optional;
@@ -360,13 +597,69 @@ class ProbableBugsInspectionBatchTest {
 				        new MessageFormat("{");
 				        String.format("%", value);
 				        String.format("prefix " + value, value);
-				        String joined = "hello" + "world";
+				        String joined = "hello world" + "welcome";
 				    }
 				}
 				""");
 
-		assertMessages(result, "Incorrect DateTimeFormat", "Incorrect MessageFormat", "Malformed", "concatenation",
-				"Whitespace may be missing");
+		assertMessages(result, "Incorrect DateTimeFormat", "Incorrect MessageFormat", "Malformed");
+		assertNoMessages(result, "concatenation", "Whitespace may be missing");
+	}
+
+	@Test
+	void acceptsEncodedStringsAndDistinctFormattingDialects() {
+		ToolResult result = inspect(new ReportFormatStringBugsTool(), """
+				import java.text.MessageFormat;
+				import java.text.SimpleDateFormat;
+				class Sample {
+				    String token = "prefix" + "123456789";
+				    String encoded = "SGVsbG8" + "gd29ybGQ=";
+				    void use() {
+				        new SimpleDateFormat("yyyy-MM-dd ZZZZZZ");
+				        MessageFormat.format("Progress {0}: 100%", 1);
+				        format("100%");
+				    }
+				    void format(String value) {}
+				}
+				""");
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+	}
+
+	@Test
+	void distinguishesFormatArgumentsFromLocaleOverloads() {
+		ToolResult result = inspect(new ReportFormatStringBugsTool(), """
+				import java.util.Locale;
+				class Sample {
+				    void use(String format, Locale locale) {
+				        String.format(format, "100%");
+				        System.out.printf(format, "100%");
+				        String.format(locale, "%");
+				        System.out.printf(Locale.ROOT, "%");
+				    }
+				}
+				""");
+		assertTrue(result.findings().size() == 2, result.findings().toString());
+		assertTrue(result.findings().stream().allMatch(finding -> finding.message().contains("Malformed")));
+	}
+
+	@Test
+	void ignoresVariablesShadowingFormattingClassNames() {
+		ToolResult result = inspect(new ReportFormatStringBugsTool(), """
+				class Custom {
+				    Custom out;
+				    void format(String value) {}
+				    void printf(String value) {}
+				}
+				class Sample {
+				    void use(Custom String, Custom System) {
+				        String.format("100%");
+				        System.out.printf("100%");
+				        java.lang.String.format("%");
+				    }
+				}
+				""");
+		assertEquals(1, result.findings().size(), result.findings().toString());
+		assertMessages(result, "Malformed");
 	}
 
 	@Test

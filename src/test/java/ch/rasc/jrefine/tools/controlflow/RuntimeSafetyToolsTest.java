@@ -105,6 +105,21 @@ class RuntimeSafetyToolsTest {
 	}
 
 	@Test
+	void preservesRethrowsThatBypassLaterExceptionHandlers() {
+		ToolResult result = inspect(new ReportExceptionFlowBugsTool(), """
+				class Sample {
+				    void run() {
+				        try { work(); }
+				        catch (IllegalArgumentException exception) { throw exception; }
+				        catch (Exception exception) { throw new IllegalStateException(exception); }
+				    }
+				    void work() {}
+				}
+				""");
+		assertTrue(result.findings().isEmpty(), result.findings().toString());
+	}
+
+	@Test
 	void ignoresControlFlowContainedInsideFinallyHelpers() {
 		ToolResult result = inspect(new ReportExceptionFlowBugsTool(), """
 				class Sample {

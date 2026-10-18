@@ -17,6 +17,28 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class ControlFlowAndCodeStyleIssuesTest {
 
 	@Test
+	void keepsMutableEqualityAndFormatCompositionAsStyleAdvice() {
+		ToolResult equality = inspect(new ReportDeclarationStyleIssuesTool(), """
+				class Sample implements Comparable<Sample> {
+				    int value;
+				    public int hashCode() { return value; }
+				    public int compareTo(Sample other) { return Integer.compare(value, other.value); }
+				}
+				""");
+		assertMessages(equality, "Non-final field referenced in hashCode()", "Comparable is implemented");
+		ToolResult strings = inspect(new ReportExpressionStyleIssuesTool(), """
+				class Sample {
+				    String format(String value) { return String.format("prefix " + value); }
+				    String prose = "hello world" + "welcome";
+				    String token = "prefix" + "12345";
+				    String encoded = "SGVsbG8" + "gd29ybGQ=";
+				}
+				""");
+		assertMessages(strings, "concatenation", "Whitespace may be missing");
+		assertTrue(strings.findings().size() == 2, strings.findings().toString());
+	}
+
+	@Test
 	void reportsStructuralControlFlowIssues() {
 		ToolResult result = inspect(new ReportControlFlowStructureIssuesTool(), """
 				enum Mode { A, B, C }

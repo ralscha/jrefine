@@ -208,6 +208,26 @@ class StructureMaturityPortabilityIssuesTest {
 	}
 
 	@Test
+	void distinguishesJdkInternalsFromPublicAndThirdPartyComSunPackages() {
+		ToolResult result = inspect(new ReportPortabilityIssuesTool(), """
+				import com.sun.faces.application.ApplicationImpl;
+				import com.sun.net.httpserver.HttpServer;
+				import com.sun.management.OperatingSystemMXBean;
+				class Sample {
+				    ApplicationImpl application;
+				    HttpServer server;
+				    OperatingSystemMXBean operatingSystem;
+				}
+				""");
+		assertNoMessages(result, "Use of sun.* internal class");
+		ToolResult internal = inspect(new ReportPortabilityIssuesTool(), """
+				import com.sun.org.apache.xerces.internal.parsers.DOMParser;
+				class Sample { DOMParser parser; }
+				""");
+		assertMessages(internal, "Use of sun.* internal class");
+	}
+
+	@Test
 	void doesNotTreatSyntaxOrProseAsFilePaths() {
 		ToolResult result = inspect(new ReportPortabilityIssuesTool(), """
 				class Sample {

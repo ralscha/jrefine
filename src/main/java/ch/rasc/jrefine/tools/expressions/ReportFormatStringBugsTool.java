@@ -3,11 +3,14 @@ package ch.rasc.jrefine.tools.expressions;
 import java.util.regex.Matcher;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.Expression;
+import com.github.javaparser.ast.expr.FieldAccessExpr;
+import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.MethodCallExpr;
 import com.github.javaparser.ast.expr.ObjectCreationExpr;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
 import com.github.javaparser.ast.expr.TextBlockLiteralExpr;
 import ch.rasc.jrefine.analysis.LineEndingSupport;
+import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -33,19 +36,22 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 
 	@Override
 	public String description() {
-		return "Report malformed format patterns and suspicious string concatenations";
+		return "Report malformed date, message, and printf format patterns";
 	}
 
 	@Override
 	public ToolResult inspect(InspectionContext context, boolean applyFixes) {
 		ArrayList<Finding> findings = new ArrayList<>();
-		textBlocks(context, findings);
 		datePatterns(context, findings);
 		messagePatterns(context, findings);
 		printfPatterns(context, findings);
+		return new ToolResult(List.copyOf(findings), false);
+	}
+
+	static void styleIssues(InspectionContext context, List<Finding> findings) {
+		textBlocks(context, findings);
 		concatenatedFormats(context, findings);
 		missingWhitespace(context, findings);
-		return new ToolResult(List.copyOf(findings), false);
 	}
 
 	private static void textBlocks(InspectionContext context, List<Finding> findings) {
@@ -69,29 +75,35 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 
 	private static void datePatterns(InspectionContext context, List<Finding> findings) {
 		for (ObjectCreationExpr creation : context.compilationUnit().findAll(ObjectCreationExpr.class)) {
-			if (!"SimpleDateFormat".equals(creation.getType().getNameAsString()) || creation.getArguments().isEmpty()) {
+			if (!TypeLookup.isKnownType(context.compilationUnit(), creation.getType().asString(), "java.text",
+					Set.of("SimpleDateFormat")) || creation.getArguments().isEmpty()) {
 				continue;
 			}
-			datePattern(creation.getArgument(0))
+			datePattern(creation.getArgument(0), true)
 				.ifPresent(problem -> findings.add(Finding.at(creation.getArgument(0), problem)));
 		}
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
 			if (!"ofPattern".equals(call.getNameAsString()) || call.getArguments().isEmpty()
-					|| call.getScope().filter(scope -> scope.toString().endsWith("DateTimeFormatter")).isEmpty()) {
+					|| !staticCall(context, call, "java.time.format", "DateTimeFormatter")) {
 				continue;
 			}
-			datePattern(call.getArgument(0))
+			datePattern(call.getArgument(0), false)
 				.ifPresent(problem -> findings.add(Finding.at(call.getArgument(0), problem)));
 		}
 	}
 
-	private static Optional<String> datePattern(Expression expression) {
+	private static Optional<String> datePattern(Expression expression, boolean legacy) {
 		if (!(expression instanceof StringLiteralExpr literal)) {
 			return Optional.empty();
 		}
 		String pattern = literal.asString();
 		try {
-			java.time.format.DateTimeFormatter.ofPattern(pattern);
+			if (legacy) {
+				new java.text.SimpleDateFormat(pattern, java.util.Locale.ROOT);
+			}
+			else {
+				java.time.format.DateTimeFormatter.ofPattern(pattern);
+			}
 		}
 		catch (IllegalArgumentException exception) {
 			return Optional.of("Incorrect DateTimeFormat pattern: " + exception.getMessage());
@@ -104,14 +116,15 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 
 	private static void messagePatterns(InspectionContext context, List<Finding> findings) {
 		for (ObjectCreationExpr creation : context.compilationUnit().findAll(ObjectCreationExpr.class)) {
-			if ("MessageFormat".equals(creation.getType().getNameAsString()) && !creation.getArguments().isEmpty()) {
+			if (TypeLookup.isKnownType(context.compilationUnit(), creation.getType().asString(), "java.text",
+					Set.of("MessageFormat")) && !creation.getArguments().isEmpty()) {
 				messagePattern(creation.getArgument(0))
 					.ifPresent(problem -> findings.add(Finding.at(creation.getArgument(0), problem)));
 			}
 		}
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
 			if ("format".equals(call.getNameAsString()) && !call.getArguments().isEmpty()
-					&& call.getScope().filter(scope -> scope.toString().endsWith("MessageFormat")).isPresent()) {
+					&& staticCall(context, call, "java.text", "MessageFormat")) {
 				messagePattern(call.getArgument(0))
 					.ifPresent(problem -> findings.add(Finding.at(call.getArgument(0), problem)));
 			}
@@ -133,17 +146,67 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 
 	private static void printfPatterns(InspectionContext context, List<Finding> findings) {
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
-			Expression format = null;
-			if (Set.of("format", "printf").contains(call.getNameAsString()) && !call.getArguments().isEmpty()) {
-				format = call.getArgument(0);
-			}
-			if ("formatted".equals(call.getNameAsString()) && call.getScope().isPresent()) {
-				format = call.getScope().orElseThrow();
-			}
+			Expression format = printfFormat(context, call).orElse(null);
 			if (format instanceof StringLiteralExpr literal && malformed(literal.asString())) {
 				findings.add(Finding.at(format, "Malformed printf-style format string"));
 			}
 		}
+	}
+
+	private static Optional<Expression> printfFormat(InspectionContext context, MethodCallExpr call) {
+		if (!Set.of("format", "printf", "formatted").contains(call.getNameAsString())) {
+			return Optional.empty();
+		}
+		Expression scope = call.getScope().orElse(null);
+		if (scope == null) {
+			return Optional.empty();
+		}
+		String type = scope instanceof ObjectCreationExpr creation ? creation.getType().asString()
+				: TypeLookup.visibleTypePreservingArrays(context.compilationUnit(), scope, call).orElse("");
+		boolean string = scope instanceof StringLiteralExpr || scope instanceof TextBlockLiteralExpr
+				|| !type.endsWith("[]")
+						&& TypeLookup.isKnownJavaLangType(context.compilationUnit(), type, Set.of("String"));
+		if ("formatted".equals(call.getNameAsString()) && string) {
+			return Optional.of(scope);
+		}
+		if (!Set.of("format", "printf").contains(call.getNameAsString()) || call.getArguments().isEmpty()) {
+			return Optional.empty();
+		}
+		boolean printStream = scope instanceof FieldAccessExpr field
+				&& Set.of("out", "err").contains(field.getNameAsString())
+				&& typeScope(context, field.getScope(), "java.lang", "System");
+		if (!("format".equals(call.getNameAsString()) && staticCall(context, call, "java.lang", "String"))
+				&& !printStream
+				&& !TypeLookup.isKnownType(context.compilationUnit(), type, "java.io",
+						Set.of("PrintStream", "PrintWriter"))
+				&& !TypeLookup.isKnownType(context.compilationUnit(), type, "java.util", Set.of("Formatter"))) {
+			return Optional.empty();
+		}
+		Expression first = call.getArgument(0);
+		if (first instanceof StringLiteralExpr || first instanceof TextBlockLiteralExpr
+				|| first instanceof BinaryExpr) {
+			return Optional.of(first);
+		}
+		boolean locale = TypeLookup.visibleTypePreservingArrays(context.compilationUnit(), first, call)
+			.filter(value -> TypeLookup.isKnownType(context.compilationUnit(), value, "java.util", Set.of("Locale")))
+			.isPresent()
+				|| first instanceof FieldAccessExpr field
+						&& typeScope(context, field.getScope(), "java.util", "Locale");
+		return locale && call.getArguments().size() > 1 ? Optional.of(call.getArgument(1)) : Optional.of(first);
+	}
+
+	private static boolean staticCall(InspectionContext context, MethodCallExpr call, String packageName, String type) {
+		return call.getScope().filter(scope -> typeScope(context, scope, packageName, type)).isPresent();
+	}
+
+	private static boolean typeScope(InspectionContext context, Expression scope, String packageName, String type) {
+		Expression root = scope;
+		while (root instanceof FieldAccessExpr field) {
+			root = field.getScope();
+		}
+		return (!(root instanceof NameExpr)
+				|| TypeLookup.visibleDeclaredType(context.compilationUnit(), root, scope).isEmpty())
+				&& TypeLookup.isKnownType(context.compilationUnit(), scope.toString(), packageName, Set.of(type));
 	}
 
 	private static boolean malformed(String pattern) {
@@ -162,15 +225,16 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 
 	private static void concatenatedFormats(InspectionContext context, List<Finding> findings) {
 		for (MethodCallExpr call : context.compilationUnit().findAll(MethodCallExpr.class)) {
-			if (!"format".equals(call.getNameAsString()) || call.getArguments().isEmpty()
-					|| !(call.getArgument(0) instanceof BinaryExpr concatenation)
+			boolean messageFormat = "format".equals(call.getNameAsString())
+					&& staticCall(context, call, "java.text", "MessageFormat");
+			Expression format = messageFormat && !call.getArguments().isEmpty() ? call.getArgument(0)
+					: printfFormat(context, call).orElse(null);
+			if (!(format instanceof BinaryExpr concatenation)
 					|| concatenation.getOperator() != BinaryExpr.Operator.PLUS) {
 				continue;
 			}
-			String owner = call.getScope().map(Object::toString).orElse("");
-			findings.add(Finding.at(call.getArgument(0),
-					owner.endsWith("MessageFormat")
-							? "String concatenation is used as an argument to MessageFormat.format()"
+			findings.add(Finding.at(format,
+					messageFormat ? "String concatenation is used as an argument to MessageFormat.format()"
 							: "String concatenation is used as an argument to format()"));
 		}
 	}
@@ -185,7 +249,9 @@ public final class ReportFormatStringBugsTool implements InspectionTool {
 			}
 			int end = left.asString().codePointBefore(left.asString().length());
 			int start = right.asString().codePointAt(0);
-			if (Character.isLetterOrDigit(end) && Character.isLetterOrDigit(start)) {
+			boolean prose = left.asString().codePoints().anyMatch(Character::isWhitespace)
+					|| right.asString().codePoints().anyMatch(Character::isWhitespace);
+			if (prose && Character.isLetter(end) && Character.isLetter(start)) {
 				findings.add(Finding.at(binary, "Whitespace may be missing in string concatenation"));
 			}
 		}

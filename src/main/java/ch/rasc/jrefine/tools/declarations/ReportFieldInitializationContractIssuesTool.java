@@ -30,8 +30,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Reports source-local non-null field initialization and mutable static initialization
- * hazards.
+ * Reports source-local non-null field initialization contracts.
  */
 public final class ReportFieldInitializationContractIssuesTool implements InspectionTool {
 
@@ -51,7 +50,7 @@ public final class ReportFieldInitializationContractIssuesTool implements Inspec
 
 	@Override
 	public String description() {
-		return "Report non-null fields that may remain uninitialized and mutable static initialization reads";
+		return "Report non-null fields that may remain uninitialized";
 	}
 
 	@Override
@@ -62,9 +61,16 @@ public final class ReportFieldInitializationContractIssuesTool implements Inspec
 				continue;
 			}
 			nonNullFields(context, type, findings);
-			nonFinalStaticInitializationReads(context, type, findings);
 		}
 		return new ToolResult(List.copyOf(findings), false);
+	}
+
+	static void declarationStyleIssues(InspectionContext context, List<Finding> findings) {
+		for (ClassOrInterfaceDeclaration type : context.compilationUnit().findAll(ClassOrInterfaceDeclaration.class)) {
+			if (!type.isInterface()) {
+				nonFinalStaticInitializationReads(context, type, findings);
+			}
+		}
 	}
 
 	private static void nonNullFields(InspectionContext context, ClassOrInterfaceDeclaration type,

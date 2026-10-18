@@ -1,11 +1,13 @@
 package ch.rasc.jrefine.tools.expressions;
 
-import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.expr.BinaryExpr;
 import com.github.javaparser.ast.expr.CastExpr;
 import com.github.javaparser.ast.expr.InstanceOfExpr;
 import com.github.javaparser.ast.expr.NameExpr;
+import com.github.javaparser.ast.expr.SimpleName;
+import com.github.javaparser.ast.expr.AssignExpr;
 import ch.rasc.jrefine.analysis.AstSupport;
+import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
 import ch.rasc.jrefine.api.InspectionContext;
 import ch.rasc.jrefine.api.InspectionTool;
@@ -14,10 +16,10 @@ import ch.rasc.jrefine.api.ToolResult;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
-import com.github.javaparser.ast.body.Parameter;
-import com.github.javaparser.ast.body.VariableDeclarator;
+import java.util.HashSet;
+import java.util.Set;
+import javax.lang.model.SourceVersion;
 import com.github.javaparser.ast.expr.Expression;
-import com.github.javaparser.ast.stmt.BlockStmt;
 
 /**
  * Introduces an instanceof pattern for casts used by the right side of a short-circuit
@@ -42,10 +44,12 @@ public final class UseInstanceofPatternsTool implements InspectionTool {
 
 	@Override
 	public ToolResult inspect(InspectionContext context, boolean applyFixes) {
+		Set<String> usedNames = new HashSet<>();
+		context.compilationUnit().findAll(SimpleName.class).forEach(name -> usedNames.add(name.asString()));
 		List<Candidate> candidates = context.compilationUnit()
 			.findAll(BinaryExpr.class)
 			.stream()
-			.map(binary -> candidate(context, binary))
+			.map(binary -> candidate(context, binary, usedNames))
 			.flatMap(Optional::stream)
 			.toList();
 		ArrayList<Finding> findings = new ArrayList<>();
@@ -62,10 +66,10 @@ public final class UseInstanceofPatternsTool implements InspectionTool {
 		return ToolResult.of(findings, applyFixes);
 	}
 
-	private static Optional<Candidate> candidate(InspectionContext context, BinaryExpr binary) {
+	private static Optional<Candidate> candidate(InspectionContext context, BinaryExpr binary, Set<String> usedNames) {
 		if (binary.getOperator() != BinaryExpr.Operator.AND || !(binary.getLeft() instanceof InstanceOfExpr instanceOf)
 				|| instanceOf.getPattern().isPresent() || !instanceOf.getType().isClassOrInterfaceType()
-				|| !stable(instanceOf.getExpression()) || AstSupport.hasComment(context, binary)) {
+				|| !stable(context, instanceOf.getExpression(), binary) || AstSupport.hasComment(context, binary)) {
 			return Optional.empty();
 		}
 		List<CastExpr> casts = binary.getRight()
@@ -77,29 +81,31 @@ public final class UseInstanceofPatternsTool implements InspectionTool {
 		if (casts.isEmpty()) {
 			return Optional.empty();
 		}
-		String simpleType = instanceOf.getType().asString();
-		simpleType = simpleType.substring(simpleType.lastIndexOf('.') + 1);
+		String simpleType = instanceOf.getType().asClassOrInterfaceType().getNameAsString();
 		String base = Character.toLowerCase(simpleType.charAt(0)) + simpleType.substring(1);
-		Node boundary = AstSupport.ancestor(binary, BlockStmt.class).map(Node.class::cast).orElse(binary);
-		String name = nameTaken(boundary, base) ? base + "Value" : base;
+		if (SourceVersion.isKeyword(base) || usedNames.contains(base)) {
+			base += "Value";
+		}
+		String name = base;
+		for (int suffix = 2; usedNames.contains(name); suffix++) {
+			name = base + suffix;
+		}
+		usedNames.add(name);
 		return Optional.of(new Candidate(instanceOf, casts, name));
 	}
 
-	private static boolean stable(Expression expression) {
-		if (expression.isNameExpr() || expression.isThisExpr()) {
+	private static boolean stable(InspectionContext context, Expression expression, BinaryExpr binary) {
+		if (expression.isThisExpr()) {
 			return true;
 		}
-		return expression.isFieldAccessExpr() && stable(expression.asFieldAccessExpr().getScope());
-	}
-
-	private static boolean nameTaken(Node boundary, String name) {
-		return boundary.findAll(NameExpr.class).stream().anyMatch(value -> value.getNameAsString().equals(name))
-				|| boundary.findAll(VariableDeclarator.class)
-					.stream()
-					.anyMatch(variable -> variable.getNameAsString().equals(name))
-				|| boundary.findAll(Parameter.class)
-					.stream()
-					.anyMatch(parameter -> parameter.getNameAsString().equals(name));
+		if (!(expression instanceof NameExpr name) || !TypeLookup
+			.isVisibleLocalOrParameterIncludingCaptured(context.compilationUnit(), name.getNameAsString(), binary)) {
+			return false;
+		}
+		return binary.getRight()
+			.findAll(AssignExpr.class)
+			.stream()
+			.noneMatch(assignment -> assignment.getTarget().equals(name));
 	}
 
 	private record Candidate(InstanceOfExpr instanceOf, List<CastExpr> casts, String variableName) {

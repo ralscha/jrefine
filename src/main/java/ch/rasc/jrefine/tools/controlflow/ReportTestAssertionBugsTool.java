@@ -188,6 +188,11 @@ public final class ReportTestAssertionBugsTool implements InspectionTool {
 		return Optional.empty();
 	}
 
+	/** Returns whether the call resolves lexically to a supported JUnit assertion. */
+	public static boolean isJUnitAssertion(InspectionContext context, MethodCallExpr call) {
+		return framework(context, call).isPresent();
+	}
+
 	private static boolean staticImport(InspectionContext context, String owner, String method) {
 		return context.compilationUnit()
 			.getImports()

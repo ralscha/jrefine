@@ -9,6 +9,8 @@ import com.github.javaparser.ast.expr.NameExpr;
 import com.github.javaparser.ast.expr.SwitchExpr;
 import com.github.javaparser.ast.stmt.SwitchEntry;
 import com.github.javaparser.ast.stmt.SwitchStmt;
+import com.github.javaparser.ast.stmt.BlockStmt;
+import com.github.javaparser.ast.stmt.BreakStmt;
 import ch.rasc.jrefine.analysis.AstSupport;
 import ch.rasc.jrefine.analysis.TypeLookup;
 import ch.rasc.jrefine.api.Finding;
@@ -33,7 +35,7 @@ public final class RemoveUnnecessaryEnumSwitchDefaultTool implements InspectionT
 
 	@Override
 	public String description() {
-		return "Remove default branches from exhaustive enum switches";
+		return "Remove empty default branches from exhaustive enum switch statements";
 	}
 
 	@Override
@@ -73,7 +75,9 @@ public final class RemoveUnnecessaryEnumSwitchDefaultTool implements InspectionT
 			return Optional.empty();
 		}
 		Optional<SwitchEntry> defaultEntry = entries.stream().filter(SwitchEntry::isDefault).findFirst();
-		if (defaultEntry.isEmpty() || AstSupport.hasComment(context, defaultEntry.orElseThrow())) {
+		if (!(node instanceof SwitchStmt) || defaultEntry.isEmpty()
+				|| !emptyDefault(defaultEntry.orElseThrow(), entries.getLast())
+				|| AstSupport.hasComment(context, defaultEntry.orElseThrow())) {
 			return Optional.empty();
 		}
 		HashSet<String> covered = new HashSet<>();
@@ -89,6 +93,18 @@ public final class RemoveUnnecessaryEnumSwitchDefaultTool implements InspectionT
 			.collect(java.util.stream.Collectors.toSet());
 		return covered.containsAll(constants) ? Optional.of(new Candidate(defaultEntry.orElseThrow()))
 				: Optional.empty();
+	}
+
+	private static boolean emptyDefault(SwitchEntry entry, SwitchEntry last) {
+		if (!entry.getLabels().isEmpty()) {
+			return false;
+		}
+		if (entry.getStatements().size() == 1 && entry.getStatement(0) instanceof BreakStmt statement) {
+			return statement.getLabel().isEmpty();
+		}
+		boolean empty = entry.getStatements().isEmpty() || entry.getStatements().size() == 1
+				&& entry.getStatement(0) instanceof BlockStmt block && block.getStatements().isEmpty();
+		return empty && (entry.getType() != SwitchEntry.Type.STATEMENT_GROUP || entry == last);
 	}
 
 	private static Optional<String> constantName(Expression expression) {

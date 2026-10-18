@@ -23,6 +23,8 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.lang.module.ModuleFinder;
+import java.util.stream.Collectors;
 import com.github.javaparser.ast.Node;
 import com.github.javaparser.ast.body.MethodDeclaration;
 
@@ -30,6 +32,23 @@ import com.github.javaparser.ast.body.MethodDeclaration;
  * Reports APIs and literals whose behavior is tied to a JVM vendor or operating system.
  */
 public final class ReportPortabilityIssuesTool implements InspectionTool {
+
+	private static final Set<String> INTERNAL_COM_SUN_PACKAGES = ModuleFinder.ofSystem()
+		.findAll()
+		.stream()
+		.flatMap(module -> {
+			Set<String> exported = module.descriptor()
+				.exports()
+				.stream()
+				.filter(export -> !export.isQualified())
+				.map(export -> export.source())
+				.collect(Collectors.toSet());
+			return module.descriptor()
+				.packages()
+				.stream()
+				.filter(name -> name.startsWith("com.sun.") && !exported.contains(name));
+		})
+		.collect(Collectors.toUnmodifiableSet());
 
 	@Override
 	public String id() {
@@ -234,7 +253,7 @@ public final class ReportPortabilityIssuesTool implements InspectionTool {
 		context.compilationUnit().getImports().forEach(imported -> {
 			String name = imported.getNameAsString();
 			String simple = simple(name);
-			if (name.startsWith("sun.") || name.startsWith("com.sun.")) {
+			if (jdkInternalType(name)) {
 				sunTypes.add(simple);
 				findings.add(Finding.at(imported, "Use of sun.* internal class"));
 			}
@@ -253,7 +272,7 @@ public final class ReportPortabilityIssuesTool implements InspectionTool {
 			if (TypeLookup.isKnownJavaLangType(context.compilationUnit(), spelling, Set.of("ProcessBuilder"))) {
 				findings.add(Finding.at(type, "Use of java.lang.ProcessBuilder may be platform-dependent"));
 			}
-			if (spelling.startsWith("sun.") || spelling.startsWith("com.sun.") || sunTypes.contains(simple)) {
+			if (jdkInternalType(spelling) || sunTypes.contains(simple)) {
 				findings.add(Finding.at(type, "Use of sun.* internal class"));
 			}
 			if (spelling.startsWith("java.awt.peer.") || peerTypes.contains(simple)) {
@@ -263,6 +282,28 @@ public final class ReportPortabilityIssuesTool implements InspectionTool {
 				findings.add(Finding.at(type, "Use of concrete JDBC driver class"));
 			}
 		}
+	}
+
+	private static boolean jdkInternalType(String name) {
+		if (name.startsWith("sun.")) {
+			return true;
+		}
+		if (!name.startsWith("com.sun.")) {
+			return false;
+		}
+		// Some internal packages disappeared from later JDKs; keep recognizing those
+		// names.
+		if (name.contains(".internal.")) {
+			return true;
+		}
+		String candidate = name;
+		while (candidate.contains(".")) {
+			if (INTERNAL_COM_SUN_PACKAGES.contains(candidate)) {
+				return true;
+			}
+			candidate = candidate.substring(0, candidate.lastIndexOf('.'));
+		}
+		return false;
 	}
 
 	private static boolean concreteJdbcDriver(String type) {

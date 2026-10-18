@@ -55,7 +55,9 @@ public final class FixJavadocParagraphsTool implements InspectionTool {
 		ArrayList<String> lines = new ArrayList<>(Arrays.asList(source.split("\\r?\\n", -1)));
 		boolean changed = false;
 		boolean inPreformatted = false;
+		boolean inBlockTags = false;
 		for (int index = 1; index + 1 < lines.size(); index++) {
+			inBlockTags |= content(lines.get(index)).startsWith("@");
 			String trimmed = lines.get(index).trim().toLowerCase(java.util.Locale.ROOT);
 			if (trimmed.contains("<pre") || trimmed.contains("<code")) {
 				inPreformatted = true;
@@ -64,7 +66,7 @@ public final class FixJavadocParagraphsTool implements InspectionTool {
 				inPreformatted = false;
 			}
 			Matcher matcher = BLANK.matcher(lines.get(index));
-			if (inPreformatted || !matcher.matches()) {
+			if (inPreformatted || inBlockTags || !matcher.matches()) {
 				continue;
 			}
 			String previous = content(lines.get(index - 1));
@@ -81,6 +83,9 @@ public final class FixJavadocParagraphsTool implements InspectionTool {
 
 	private static String content(String line) {
 		String value = line.strip();
+		if (value.equals("/**") || value.equals("*/")) {
+			return "";
+		}
 		if (value.startsWith("*")) {
 			value = value.substring(1).strip();
 		}

@@ -1,6 +1,11 @@
 package ch.rasc.jrefine.tools.controlflow;
 
 import com.github.javaparser.ast.body.VariableDeclarator;
+import com.github.javaparser.ast.body.TypeDeclaration;
+import com.github.javaparser.ast.expr.MethodCallExpr;
+import com.github.javaparser.ast.expr.ObjectCreationExpr;
+import com.github.javaparser.ast.expr.MethodReferenceExpr;
+import com.github.javaparser.ast.expr.CastExpr;
 import com.github.javaparser.Range;
 import com.github.javaparser.ast.expr.BooleanLiteralExpr;
 import com.github.javaparser.ast.expr.NameExpr;
@@ -88,6 +93,9 @@ public final class CollapseLoopToStreamTool implements InspectionTool {
 				return Optional.empty();
 			}
 			VariableDeclarator mapped = declaration.getVariable(0);
+			if (!mappingPreservesType(context, mapped)) {
+				return Optional.empty();
+			}
 			stream += ".map(" + item + " -> " + context.editor().text(mapped.getInitializer().orElseThrow()) + ")";
 			terminalName = mapped.getNameAsString();
 			conditional = value;
@@ -145,9 +153,73 @@ public final class CollapseLoopToStreamTool implements InspectionTool {
 
 	private static boolean knownCollection(InspectionContext context, ForEachStmt loop) {
 		return loop.getVariable().getVariables().size() == 1 && !capturesReassignedLocal(context, loop)
+				&& callsHaveNoCheckedExceptions(context, loop)
+				// Inferred lambda parameters must retain the loop variable's static type.
+				&& TypeLookup.visibleDeclaredType(context.compilationUnit(), loop.getIterable(), loop)
+					.filter(type -> type.endsWith("<" + loop.getVariable().getVariable(0).getType().asString() + ">"))
+					.isPresent()
 				&& TypeLookup.visibleType(context.compilationUnit(), loop.getIterable(), loop)
 					.filter(type -> TypeLookup.isKnownJavaUtilType(context.compilationUnit(), type, COLLECTION_TYPES))
 					.isPresent();
+	}
+
+	private static boolean mappingPreservesType(InspectionContext context, VariableDeclarator mapped) {
+		String declared = mapped.getType().asString();
+		if (mapped.getType().isPrimitiveType()) {
+			return false;
+		}
+		var initializer = mapped.getInitializer().orElseThrow();
+		if (TypeLookup.visibleDeclaredType(context.compilationUnit(), initializer, mapped)
+			.filter(declared::equals)
+			.isPresent() || initializer instanceof CastExpr cast && cast.getType().asString().equals(declared)) {
+			return true;
+		}
+		if (!TypeLookup.isKnownJavaLangType(context.compilationUnit(), declared, Set.of("String"))) {
+			return false;
+		}
+		return initializer.isStringLiteralExpr() || initializer instanceof MethodCallExpr call
+				&& Set
+					.of("trim", "strip", "stripLeading", "stripTrailing", "substring", "toLowerCase", "toUpperCase",
+							"toString")
+					.contains(call.getNameAsString())
+				&& call.getScope()
+					.flatMap(scope -> TypeLookup.visibleType(context.compilationUnit(), scope, call))
+					.filter(type -> TypeLookup.isKnownJavaLangType(context.compilationUnit(), type, Set.of("String")))
+					.isPresent();
+	}
+
+	private static boolean callsHaveNoCheckedExceptions(InspectionContext context, ForEachStmt loop) {
+		if (!loop.getBody().findAll(ObjectCreationExpr.class).isEmpty()
+				|| !loop.getBody().findAll(MethodReferenceExpr.class).isEmpty()) {
+			return false;
+		}
+		for (MethodCallExpr call : loop.getBody().findAll(MethodCallExpr.class)) {
+			if (call.getScope().isEmpty() || call.getScope().orElseThrow().isThisExpr()) {
+				TypeDeclaration<?> owner = call.findAncestor(TypeDeclaration.class).orElse(null);
+				if (owner == null) {
+					return false;
+				}
+				var methods = owner.getMethodsByName(call.getNameAsString())
+					.stream()
+					.filter(method -> method.getParameters().size() == call.getArguments().size())
+					.toList();
+				if (methods.isEmpty() || methods.stream().anyMatch(method -> !method.getThrownExceptions().isEmpty())) {
+					return false;
+				}
+				continue;
+			}
+			String receiver = TypeLookup.visibleType(context.compilationUnit(), call.getScope().orElseThrow(), call)
+				.orElse("");
+			if (!TypeLookup.isKnownJavaLangType(context.compilationUnit(), receiver, Set.of("String")) || !Set
+				.of("length", "isEmpty", "isBlank", "startsWith", "endsWith", "contains", "equals", "equalsIgnoreCase",
+						"trim", "strip", "stripLeading", "stripTrailing", "substring", "charAt", "codePointAt",
+						"toLowerCase", "toUpperCase", "indexOf", "lastIndexOf", "compareTo", "compareToIgnoreCase",
+						"toString")
+				.contains(call.getNameAsString())) {
+				return false;
+			}
+		}
+		return true;
 	}
 
 	private static boolean capturesReassignedLocal(InspectionContext context, ForEachStmt loop) {
