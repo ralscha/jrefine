@@ -40,7 +40,7 @@ jobs:
           release_version="${GITHUB_REF_NAME#v}"
           actual_version="$(java -jar target/jrefine.jar --version)"
           if [[ "$actual_version" != "jrefine $release_version" ]]; then
-            echo "Artifact version mismatch: $actual_version" >&2
+            echo "Artifact version mismatch: expected 'jrefine $release_version', got '$actual_version'" >&2
             exit 1
           fi
           cd target
