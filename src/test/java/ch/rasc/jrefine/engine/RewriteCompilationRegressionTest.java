@@ -58,7 +58,7 @@ class RewriteCompilationRegressionTest {
 				""";
 		assertUnchangedAndCompiles(original, List.of(new UseDiamondOperatorTool()), "8");
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 	}
 
@@ -119,7 +119,7 @@ class RewriteCompilationRegressionTest {
 		assertEquals(0, ToolProvider.getSystemJavaCompiler()
 			.run(null, null, null, "--release", "8", "-d", temporaryDirectory.toString(), source.toString()));
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 		assertEquals(0, new JRefineEngine().run(source, tools, true).changedFiles());
 	}
@@ -163,7 +163,7 @@ class RewriteCompilationRegressionTest {
 		assertEquals(0, ToolProvider.getSystemJavaCompiler()
 			.run(null, null, null, "--release", "8", "-d", temporaryDirectory.toString(), source.toString()));
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 		assertEquals(0, new JRefineEngine().run(source, tools, true).changedFiles());
 	}
@@ -201,7 +201,7 @@ class RewriteCompilationRegressionTest {
 		assertEquals(0, ToolProvider.getSystemJavaCompiler()
 			.run(null, null, null, "--release", "17", "-d", temporaryDirectory.toString(), source.toString()));
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 		assertEquals(0, new JRefineEngine().run(source, tools, true).changedFiles());
 	}
@@ -234,10 +234,9 @@ class RewriteCompilationRegressionTest {
 				""";
 		assertUnchangedAndCompiles(original, List.of(new UseFilesStringMethodsTool()), "17");
 		try (var loader = loader()) {
-			assertEquals(true,
-					loader.loadClass("Sample")
-						.getMethod("probe", String.class)
-						.invoke(null, temporaryDirectory.toString()));
+			assertTrue((Boolean) loader.loadClass("Sample")
+				.getMethod("probe", String.class)
+				.invoke(null, temporaryDirectory.toString()));
 		}
 	}
 
@@ -320,10 +319,9 @@ class RewriteCompilationRegressionTest {
 		assertUnchangedAndCompiles(original,
 				List.of(new OptimizePerformanceExpressionsTool(), new UseBulkFileAttributesTool()));
 		try (var loader = loader()) {
-			assertEquals(true,
-					loader.loadClass("Sample")
-						.getMethod("probe", java.io.File.class)
-						.invoke(null, temporaryDirectory.resolve("missing-parent/file").toFile()));
+			assertTrue((Boolean) loader.loadClass("Sample")
+				.getMethod("probe", java.io.File.class)
+				.invoke(null, temporaryDirectory.resolve("missing-parent").resolve("file").toFile()));
 		}
 	}
 
@@ -401,7 +399,7 @@ class RewriteCompilationRegressionTest {
 				""";
 		assertUnchangedAndCompiles(original, List.of(new MergeDuplicateSwitchBranchesTool()), "21");
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 	}
 
@@ -437,7 +435,7 @@ class RewriteCompilationRegressionTest {
 				""";
 		assertUnchangedAndCompiles(original, List.of(new RemoveUnnecessarySemicolonsTool()));
 		try (var loader = loader()) {
-			assertEquals(true, loader.loadClass("Sample").getMethod("probe").invoke(null));
+			assertTrue((Boolean) loader.loadClass("Sample").getMethod("probe").invoke(null));
 		}
 	}
 
